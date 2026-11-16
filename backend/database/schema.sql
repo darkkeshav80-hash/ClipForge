@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS projects (
     stage_progress REAL DEFAULT 0.0,
     total_progress REAL DEFAULT 0.0,
     clips_count INTEGER DEFAULT 0,
+    target_clips INTEGER DEFAULT 3,
+    min_viral_score INTEGER DEFAULT 70,
+    min_duration REAL DEFAULT 15.0,
+    max_duration REAL DEFAULT 60.0,
     caption_preset TEXT DEFAULT 'mrbeast',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

@@ -314,6 +314,10 @@ export const App: React.FC = () => {
         fps: videoData.fps || currentProject?.fps || 30,
         caption_preset: config?.captionPreset || currentProject?.caption_preset || localStorage.getItem('clipforge_selected_caption_style') || 'mrbeast',
         aspect_ratio: config?.aspectRatio || currentProject?.aspect_ratio || '9:16',
+        target_clips: config?.clipsCount || 3,
+        min_viral_score: config?.minViralScore || 70,
+        min_duration: minD,
+        max_duration: maxD,
         status: 'importing' as PipelineStage,
       };
 

@@ -95,6 +95,63 @@ class VideoAnalyzer:
                     "words": current_chunk_words[:],
                 })
 
+        # If sequential non-overlapping chunking yielded fewer candidates than needed,
+        # generate sliding-window candidate segments across sentence/word boundaries
+        # so short or medium videos have plenty of diverse candidate moments
+        needed_candidates = max(target_clips * 2, 8)
+        if len(candidate_segments) < needed_candidates and len(words) >= 5:
+            sentences = []
+            curr_s = []
+            for w in words:
+                curr_s.append(w)
+                if punct_pattern.search(w["word"]):
+                    sentences.append(curr_s)
+                    curr_s = []
+            if curr_s:
+                sentences.append(curr_s)
+
+            # Build sliding windows of sentences that fit min_duration..max_duration
+            if len(sentences) >= 2:
+                for start_idx in range(len(sentences)):
+                    accum_words = []
+                    for end_idx in range(start_idx, len(sentences)):
+                        accum_words.extend(sentences[end_idx])
+                        dur = accum_words[-1]["end"] - accum_words[0]["start"]
+                        if min_duration <= dur <= max_duration:
+                            s_start = accum_words[0]["start"]
+                            s_end = accum_words[-1]["end"]
+                            if not any(abs(c["start_time"] - s_start) < 1.0 and abs(c["end_time"] - s_end) < 1.0 for c in candidate_segments):
+                                candidate_segments.append({
+                                    "start_time": s_start,
+                                    "end_time": s_end,
+                                    "duration": round(dur, 2),
+                                    "transcript": " ".join(cw["word"] for cw in accum_words),
+                                    "words": accum_words[:],
+                                })
+                        elif dur > max_duration:
+                            break
+
+            # If still short on candidates, use a sliding time window with stride
+            if len(candidate_segments) < needed_candidates:
+                stride_sec = 8.0
+                window_dur = min(max_duration, max(min_duration, (total_duration / max(1, target_clips))))
+                t_cursor = words[0]["start"]
+                while t_cursor + min_duration <= words[-1]["end"] + 1.0:
+                    w_sub = [w for w in words if w["start"] >= t_cursor and w["end"] <= t_cursor + window_dur]
+                    if w_sub and (w_sub[-1]["end"] - w_sub[0]["start"]) >= min_duration:
+                        s_start = w_sub[0]["start"]
+                        s_end = w_sub[-1]["end"]
+                        dur = round(s_end - s_start, 2)
+                        if not any(abs(c["start_time"] - s_start) < 2.0 and abs(c["end_time"] - s_end) < 2.0 for c in candidate_segments):
+                            candidate_segments.append({
+                                "start_time": s_start,
+                                "end_time": s_end,
+                                "duration": dur,
+                                "transcript": " ".join(cw["word"] for cw in w_sub),
+                                "words": w_sub[:],
+                            })
+                    t_cursor += stride_sec
+
         if not candidate_segments:
             candidate_segments = [{
                 "start_time": words[0]["start"],
@@ -143,15 +200,52 @@ class VideoAnalyzer:
                 "scores": scores
             })
 
-        # Filter by min_viral_score, or fall back to top candidates if threshold is overly aggressive
+        # Rank all scored candidates by overall virality score descending
+        all_scored_candidates.sort(key=lambda c: c["scores"]["overall"], reverse=True)
+
+        # Filter candidates meeting the min_viral_score threshold
         matching = [c for c in all_scored_candidates if c["scores"]["overall"] >= min_viral_score]
-        if not matching and all_scored_candidates:
-            logger.warning(f"No clips met min_viral_score={min_viral_score}. Falling back to top scoring segments.")
-            all_scored_candidates.sort(key=lambda c: c["scores"]["overall"], reverse=True)
-            matching = all_scored_candidates[:target_clips]
-        else:
-            matching.sort(key=lambda c: c["scores"]["overall"], reverse=True)
-            matching = matching[:target_clips]
+
+        # Top-up quota guarantee: if fewer than target_clips met the strict score,
+        # fill the remaining slots with the highest-scoring candidate moments so the user
+        # always receives their requested clip quota
+        if len(matching) < target_clips and all_scored_candidates:
+            logger.info(
+                f"{len(matching)}/{target_clips} clips met min_viral_score={min_viral_score}. "
+                f"Topping up with top scoring candidates to satisfy requested quota of {target_clips} clips."
+            )
+
+            def has_heavy_overlap(cand, selected, max_ratio=0.6):
+                c_start, c_end = cand["seg"]["start_time"], cand["seg"]["end_time"]
+                c_dur = max(1.0, c_end - c_start)
+                for s in selected:
+                    s_start, s_end = s["seg"]["start_time"], s["seg"]["end_time"]
+                    s_dur = max(1.0, s_end - s_start)
+                    overlap = max(0.0, min(c_end, s_end) - max(c_start, s_start))
+                    if (overlap / min(c_dur, s_dur)) > max_ratio:
+                        return True
+                return False
+
+            matching_ids = {id(c) for c in matching}
+            # First pass: add diverse, non-heavily-overlapping candidates
+            for c in all_scored_candidates:
+                if id(c) not in matching_ids and not has_heavy_overlap(c, matching):
+                    matching.append(c)
+                    matching_ids.add(id(c))
+                if len(matching) >= target_clips:
+                    break
+
+            # Second pass: if still under quota, fill with any remaining candidates
+            if len(matching) < target_clips:
+                for c in all_scored_candidates:
+                    if id(c) not in matching_ids:
+                        matching.append(c)
+                        matching_ids.add(id(c))
+                    if len(matching) >= target_clips:
+                        break
+
+        matching.sort(key=lambda c: c["scores"]["overall"], reverse=True)
+        matching = matching[:target_clips]
 
         evaluated_clips = []
         for item in matching:

@@ -237,10 +237,11 @@ class PipelineWorker:
         await self._update_project_status(project_id, "analyzing", 45.0, stage_progress=50.0)
         await PipelineLogEmitter.emit("analyzing", "AI Virality Scoring Engine evaluating storytelling peaks and hooks...", "info", project_id)
 
-        target_clips = auto_set["clips_per_video"] if auto_set else 3
-        min_viral = auto_set["min_viral_score"] if auto_set else 70
-        min_dur = float(auto_set["min_duration"]) if auto_set else 15.0
-        max_dur = float(auto_set["max_duration"]) if auto_set else 60.0
+        # Read project preferences, falling back to automation settings
+        target_clips = int(project.get("target_clips") or (auto_set.get("clips_per_video") if auto_set else 3))
+        min_viral = int(project.get("min_viral_score") or (auto_set.get("min_viral_score") if auto_set else 70))
+        min_dur = float(project.get("min_duration") or (auto_set.get("min_duration") if auto_set else 15.0))
+        max_dur = float(project.get("max_duration") or (auto_set.get("max_duration") if auto_set else 60.0))
         project_preset = project.get("caption_preset") or (auto_set["default_caption_preset"] if auto_set else "mrbeast")
         default_preset = project_preset
 

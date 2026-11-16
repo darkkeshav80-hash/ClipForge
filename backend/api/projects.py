@@ -29,13 +29,19 @@ async def create_project(data: Dict[str, Any]):
     now = datetime.now().isoformat()
     caption_preset = data.get("caption_preset", "mrbeast")
     
+    target_clips = int(data.get("target_clips") or data.get("clips_count") or 3)
+    min_viral_score = int(data.get("min_viral_score", 70))
+    min_duration = float(data.get("min_duration", 15.0))
+    max_duration = float(data.get("max_duration", 60.0))
+    
     async with db.get_connection() as conn:
         await conn.execute("""
             INSERT OR REPLACE INTO projects (
                 id, name, description, source_video_path, source_url, thumbnail_path,
                 duration, width, height, fps, status, stage_progress, total_progress,
-                clips_count, caption_preset, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                clips_count, target_clips, min_viral_score, min_duration, max_duration,
+                caption_preset, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             project_id,
             data.get("name", "Untitled Project"),
@@ -48,7 +54,8 @@ async def create_project(data: Dict[str, Any]):
             data.get("height", 1080),
             data.get("fps", 30.0),
             data.get("status", "idle"),
-            0.0, 0.0, 0, caption_preset, now, now
+            0.0, 0.0, 0, target_clips, min_viral_score, min_duration, max_duration,
+            caption_preset, now, now
         ))
         await conn.commit()
     

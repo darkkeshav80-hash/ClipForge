@@ -74,11 +74,15 @@ class GeminiProvider(BaseAIProvider):
                             raise RuntimeError(f"Gemini returned empty candidate list: {data}")
                         return candidates[0]["content"]["parts"][0]["text"]
 
-                    if resp.status_code in [429, 503] and attempt < max_retries:
-                        logger.warning(f"Gemini HTTP {resp.status_code} on attempt {attempt+1}. Retrying in {backoff:.1f}s...")
-                        await asyncio.sleep(backoff)
-                        backoff *= 2.0
-                        continue
+                    if resp.status_code in [429, 503]:
+                        # If daily free tier quota is exhausted, fail immediately to local fallback
+                        if "per day limit exceeded" in resp.text or "quota" in resp.text.lower():
+                            raise RuntimeError(f"Gemini daily quota exhausted. Falling back to local engine.")
+                        if attempt < max_retries:
+                            logger.warning(f"Gemini HTTP {resp.status_code} on attempt {attempt+1}. Retrying in {backoff:.1f}s...")
+                            await asyncio.sleep(backoff)
+                            backoff *= 2.0
+                            continue
 
                     # Error handling
                     err_msg = f"Gemini API error ({resp.status_code}): {resp.text}"
