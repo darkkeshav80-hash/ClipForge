@@ -90,9 +90,9 @@ def generate_zoompan_expression(punch_times: List[float], duration: float, fps: 
         combined = f"max({combined},{c})"
 
     # Return full zoompan filter string centered on 1080x1920
-    total_frames = int(duration * fps)
+    # Note: On video streams, d MUST be 1 so each input frame maps to 1 output frame
     return (
         f"zoompan=z='{combined}':"
         f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-        f"d={total_frames}:s=1080x1920:fps={fps}"
+        f"d=1:s=1080x1920:fps={fps}"
     )

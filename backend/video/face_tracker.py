@@ -40,13 +40,19 @@ class FaceTracker:
         end_time = start_time + duration
         total_samples = 0
 
+        consecutive_read_failures = 0
         while t < end_time:
             frame_no = int(t * fps)
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
             ret, frame = cap.read()
             if not ret or frame is None:
-                break
+                consecutive_read_failures += 1
+                if consecutive_read_failures >= 5:
+                    break
+                t += sample_interval
+                continue
 
+            consecutive_read_failures = 0
             total_samples += 1
             h, w = frame.shape[:2]
             small_w = 320

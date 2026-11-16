@@ -75,10 +75,12 @@ async def update_clip(clip_id: str, updates: Dict[str, Any]):
 @router.delete("/{clip_id}")
 async def delete_clip(clip_id: str):
     async with db.get_connection() as conn:
-        cursor = await conn.execute("SELECT rendered_path, thumbnail_path FROM clips WHERE id = ?", (clip_id,))
+        cursor = await conn.execute("SELECT project_id, rendered_path, thumbnail_path FROM clips WHERE id = ?", (clip_id,))
         row = await cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Clip not found")
+
+        project_id = row["project_id"]
 
         if row["rendered_path"]:
             p = settings.STORAGE_DIR / row["rendered_path"]
@@ -90,6 +92,12 @@ async def delete_clip(clip_id: str):
                 t.unlink(missing_ok=True)
 
         await conn.execute("DELETE FROM clips WHERE id = ?", (clip_id,))
+        if project_id:
+            await conn.execute("""
+                UPDATE projects SET clips_count = (
+                    SELECT COUNT(*) FROM clips WHERE project_id = ?
+                ) WHERE id = ?
+            """, (project_id, project_id))
         await conn.commit()
 
     return {"success": True, "message": f"Clip {clip_id} deleted."}

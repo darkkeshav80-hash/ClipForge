@@ -382,12 +382,20 @@ class PipelineWorker:
                         clip_id
                     )
 
+                target_aspect = clip.get("aspect_ratio", "9:16")
+                if target_aspect == "9:16":
+                    sub_w, sub_h = 1080, 1920
+                elif target_aspect == "1:1":
+                    sub_w, sub_h = 1080, 1080
+                else:
+                    sub_w, sub_h = 1920, 1080
+
                 ass_writer.generate_ass(
                     words=clip_words,
                     preset=preset_conf,
                     output_path=ass_path,
-                    video_width=probe_info.get("width", 1080),
-                    video_height=probe_info.get("height", 1920),
+                    video_width=sub_w,
+                    video_height=sub_h,
                     clip_start_offset=clip["start_time"],
                     keywords=kws,
                     title=clip.get("title", "")
@@ -412,7 +420,6 @@ class PipelineWorker:
                 output_clip_path = settings.CLIPS_DIR / f"{clip_id}_rendered.mp4"
                 thumb_path = settings.THUMBNAILS_DIR / f"{clip_id}_thumb.jpg"
 
-                target_aspect = clip.get("aspect_ratio", "9:16")
                 await PipelineLogEmitter.emit(
                     "rendering",
                     f"Rendering {target_aspect} short with FFmpeg ({speaker_layout} layout, dynamic zooms)...",

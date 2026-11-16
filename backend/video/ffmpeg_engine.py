@@ -174,7 +174,7 @@ class FFmpegEngine:
             base_vf = (
                 f"crop=w='min(iw,ih)':h='min(iw,ih)':"
                 f"x='min(max({cx}*iw - min(iw,ih)/2, 0), iw - min(iw,ih))':"
-                f"y='(ih - min(ih,iw*16/9))/2',"
+                f"y='(ih - min(iw,ih))/2',"
                 f"scale=1080:1080:flags=lanczos"
             )
         else: # 16:9
@@ -232,9 +232,21 @@ class FFmpegEngine:
         attempts = []
         if is_complex:
             # Complex filter graph for vstack split
+            clean_base = base_vf.removesuffix("[v]")
             if clean_sub_filter:
-                complex_vf = f"{base_vf.rstrip('[v]')}[stacked];[stacked]{clean_sub_filter}[v]"
+                complex_vf = f"{clean_base}[stacked];[stacked]{clean_sub_filter}[v]"
                 attempts.append((complex_vf, sw_enc, "CPU + Split Layout + Subtitles", False, True))
+
+                # Safe subtitle fallback for split layout
+                if ass_subtitles_path and ass_subtitles_path.exists():
+                    safe_ass = ass_subtitles_path.with_name(ass_subtitles_path.stem + "_safe.ass")
+                    try:
+                        self._generate_safe_ass(ass_subtitles_path, safe_ass)
+                        safe_clean = str(safe_ass).replace("\\", "/").replace(":", "\\:")
+                        safe_complex_vf = f"{clean_base}[stacked];[stacked]ass='{safe_clean}'[v]"
+                        attempts.append((safe_complex_vf, sw_enc, "CPU + Split Layout + Safe Subtitles Fallback", True, True))
+                    except Exception as e:
+                        logger.warning(f"Could not build safe fallback ASS for split layout: {e}")
             else:
                 attempts.append((base_vf, sw_enc, "CPU + Split Layout", False, True))
         else:
