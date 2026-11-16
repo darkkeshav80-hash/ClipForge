@@ -57,7 +57,13 @@ def calculate_punch_moments(
 
     return punch_times
 
-def generate_zoompan_expression(punch_times: List[float], duration: float, fps: float = 30.0) -> str:
+def generate_zoompan_expression(
+    punch_times: List[float],
+    duration: float,
+    fps: float = 30.0,
+    out_w: int = 1080,
+    out_h: int = 1920
+) -> str:
     """
     Constructs an optimized FFmpeg zoompan filter expression that performs
     smoothstep punch-in pushes on the calculated emphasis moments.
@@ -89,10 +95,10 @@ def generate_zoompan_expression(punch_times: List[float], duration: float, fps: 
     for c in conditions[1:]:
         combined = f"max({combined},{c})"
 
-    # Return full zoompan filter string centered on 1080x1920
+    # Return full zoompan filter string centered on out_w x out_h
     # Note: On video streams, d MUST be 1 so each input frame maps to 1 output frame
     return (
         f"zoompan=z='{combined}':"
         f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-        f"d=1:s=1080x1920:fps={fps}"
+        f"d=1:s={out_w}x{out_h}:fps={fps}"
     )

@@ -23,6 +23,7 @@ Given a video moment timestamp range and transcript, formulate an intelligent ed
 Always output strict JSON with this exact schema:
 {
   "hook_text": "<punchy 1-sentence hook to display on the first frame>",
+  "keywords": ["<punchy hook word 1>", "<emphasis word 2>"],
   "important_sentences": ["<key sentence 1>", "<key sentence 2>"],
   "silence_removal": true,
   "zooms": [
@@ -69,6 +70,10 @@ Generate the editing plan JSON."""
             # Deterministic fallback plan
             sentences = transcript.split(". ")
             first_sentence = sentences[0].strip() if sentences else transcript[:60]
+            # Extract high-energy keyword candidates for zoom and subtitle highlights
+            words_in_hook = [w.strip(".,!?:;\"'()").lower() for w in first_sentence.split()]
+            stop_words = {"the", "and", "a", "an", "in", "on", "at", "to", "for", "of", "with", "is", "it", "this", "that"}
+            fallback_kws = [w for w in words_in_hook if len(w) >= 4 and w not in stop_words][:4]
 
             return {
                 "clip_id": clip_id,
@@ -76,6 +81,7 @@ Generate the editing plan JSON."""
                 "end_time": end_time,
                 "duration": duration,
                 "hook_text": first_sentence[:70],
+                "keywords": fallback_kws,
                 "important_sentences": sentences[:2],
                 "unnecessary_pauses": [],
                 "silence_removal": True,

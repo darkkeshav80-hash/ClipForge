@@ -1,13 +1,16 @@
 import os
 import time
 from pathlib import Path
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from typing import Dict, Any
 from backend.core.hardware import hardware_monitor
 from backend.config import settings
 from backend.core.logger import logger
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+VALID_PROFILES = {"ECO", "BALANCED", "QUALITY"}
+VALID_WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v2", "large-v3"}
 
 @router.get("/settings", response_model=Dict[str, Any])
 async def get_system_settings():
@@ -32,10 +35,20 @@ async def get_system_settings():
 @router.post("/settings")
 async def update_system_settings(data: Dict[str, Any]):
     hw = data.get("hardware", {})
+    if "profile" in hw and hw["profile"] not in VALID_PROFILES:
+        raise HTTPException(status_code=400, detail=f"profile must be one of {sorted(VALID_PROFILES)}")
+    if "whisper_model" in hw and hw["whisper_model"] not in VALID_WHISPER_MODELS:
+        raise HTTPException(status_code=400, detail=f"whisper_model must be one of {sorted(VALID_WHISPER_MODELS)}")
+    if "ffmpeg_threads" in hw:
+        try:
+            threads = int(hw["ffmpeg_threads"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="ffmpeg_threads must be an integer")
+        if not 1 <= threads <= 64:
+            raise HTTPException(status_code=400, detail="ffmpeg_threads must be between 1 and 64")
+        settings.FFMPEG_THREADS = threads
     if "profile" in hw:
         settings.HARDWARE_PROFILE = hw["profile"]
-    if "ffmpeg_threads" in hw:
-        settings.FFMPEG_THREADS = int(hw["ffmpeg_threads"])
     if "whisper_model" in hw:
         settings.DEFAULT_WHISPER_MODEL = hw["whisper_model"]
     if "enable_gpu" in hw:
@@ -45,7 +58,12 @@ async def update_system_settings(data: Dict[str, Any]):
 
 @router.post("/cleanup")
 async def storage_cleanup(data: Dict[str, Any]):
-    days_old = data.get("days_old", 7)
+    try:
+        days_old = float(data.get("days_old", 7))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="days_old must be a number")
+    if days_old < 0:
+        raise HTTPException(status_code=400, detail="days_old must be 0 or greater")
     cutoff = time.time() - (days_old * 86400)
     freed_bytes = 0
 

@@ -143,15 +143,18 @@ class FFmpegEngine:
         # Clamp face center to safe bounds
         cx = max(0.1, min(0.9, float(crop_center_x)))
 
-        # Resolution & scaling profile
+        # Resolution & scaling profile adapted to aspect ratio
+        if aspect_ratio == "1:1":
+            scale_w, scale_h = (540, 540) if is_preview else (1080, 1080)
+        elif aspect_ratio == "16:9":
+            scale_w, scale_h = (960, 540) if is_preview else (1920, 1080)
+        else: # 9:16
+            scale_w, scale_h = (540, 960) if is_preview else (1080, 1920)
+
+        scale_flag = "bilinear" if is_preview else "lanczos"
+        sw_enc = ["-c:v", "libx264", "-preset", "ultrafast" if is_preview else "veryfast", "-crf", "22" if is_preview else "20"]
         if is_preview:
-            scale_w, scale_h = 540, 960
-            scale_flag = "bilinear"
-            sw_enc = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "22", "-tune", "fastdecode"]
-        else:
-            scale_w, scale_h = 1080, 1920
-            scale_flag = "lanczos"
-            sw_enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+            sw_enc.extend(["-tune", "fastdecode"])
 
         # 1. Build Base Video Filter (Single Face Crop vs Dual-Speaker Podcast Split)
         is_complex = False
@@ -175,19 +178,19 @@ class FFmpegEngine:
                 f"crop=w='min(iw,ih)':h='min(iw,ih)':"
                 f"x='min(max({cx}*iw - min(iw,ih)/2, 0), iw - min(iw,ih))':"
                 f"y='(ih - min(iw,ih))/2',"
-                f"scale=1080:1080:flags=lanczos"
+                f"scale={scale_w}:{scale_h}:flags={scale_flag}"
             )
         else: # 16:9
-            base_vf = "scale=1920:1080:flags=lanczos"
+            base_vf = f"scale={scale_w}:{scale_h}:flags={scale_flag}"
 
         # Apply Dynamic Hook-Beat Punch-In Zooms if enabled
         if zoom_in and not is_preview and not is_complex:
             if punch_moments:
-                punch_expr = generate_zoompan_expression(punch_moments, clamped_duration, fps=30.0)
+                punch_expr = generate_zoompan_expression(punch_moments, clamped_duration, fps=30.0, out_w=scale_w, out_h=scale_h)
                 if punch_expr:
                     base_vf += f",{punch_expr}"
             else:
-                base_vf += ",zoompan=z='min(zoom+0.001,1.08)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30"
+                base_vf += f",zoompan=z='min(zoom+0.001,1.08)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={scale_w}x{scale_h}:fps=30"
 
         audio_filter = "loudnorm=I=-14:LRA=11:TP=-1.5" if normalize_audio and not is_preview else "anull"
 

@@ -165,10 +165,18 @@ class VideoAnalyzer:
         if scene_cuts:
             for seg in candidate_segments:
                 s_start, s_end = snap_to_scene_boundaries(seg["start_time"], seg["end_time"], scene_cuts)
+                # Protect first and last word boundaries from being truncated by scene cuts
+                first_w_start = seg["words"][0]["start"] if seg.get("words") else s_start
+                if s_start > first_w_start:
+                    s_start = first_w_start
+                last_w_end = seg["words"][-1]["end"] if seg.get("words") else s_end
+                if s_end < last_w_end:
+                    s_end = last_w_end
+
                 seg["start_time"] = s_start
                 seg["end_time"] = s_end
                 seg["duration"] = round(s_end - s_start, 2)
-                matching_words = [w for w in words if w["start"] >= s_start and w["end"] <= s_end]
+                matching_words = [w for w in words if w["end"] > s_start and w["start"] < s_end]
                 if matching_words:
                     seg["words"] = matching_words
                     seg["transcript"] = " ".join([cw["word"] for cw in matching_words])
