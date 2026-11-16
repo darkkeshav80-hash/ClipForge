@@ -1,0 +1,112 @@
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from backend.config import settings
+from backend.core.logger import logger
+from backend.core.db import db
+
+# Import API Routers
+from backend.api.projects import router as projects_router
+from backend.api.videos import router as videos_router
+from backend.api.clips import router as clips_router
+from backend.api.captions import router as captions_router
+from backend.api.models import router as models_router
+from backend.api.providers import router as providers_router
+from backend.api.automation import router as automation_router
+from backend.api.youtube import router as youtube_router
+from backend.api.analytics import router as analytics_router
+from backend.api.system import router as system_router
+from backend.api.websocket import router as websocket_router
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup sequence
+    logger.info("=======================================================")
+    logger.info(f" Starting {settings.APP_NAME} v{settings.VERSION}")
+    logger.info(f" Host: {settings.HOST}:{settings.PORT}")
+    logger.info(f" Storage Directory: {settings.STORAGE_DIR}")
+    logger.info("=======================================================")
+    
+    # Initialize SQLite schema & seed catalogs
+    await db.init_db()
+
+    # Recovery: check for interrupted jobs from previous session
+    async with db.get_connection() as conn:
+        cursor = await conn.execute("SELECT id, name, source_video_path FROM projects WHERE status IN ('importing', 'transcribing', 'analyzing', 'editing', 'rendering', 'queued')")
+        interrupted = await cursor.fetchall()
+        if interrupted:
+            logger.info(f"Marking {len(interrupted)} interrupted job(s) from previous session as resumable...")
+            await conn.execute("UPDATE projects SET status = 'interrupted' WHERE status IN ('importing', 'transcribing', 'analyzing', 'editing', 'rendering', 'queued')")
+            await conn.commit()
+        
+        # Clean up duplicate empty/stuck projects
+        await conn.execute("""
+            DELETE FROM projects WHERE status = 'interrupted' AND (duration IS NULL OR duration = 0)
+            AND id NOT IN (SELECT MIN(id) FROM projects GROUP BY source_video_path)
+        """)
+        await conn.commit()
+
+    yield
+
+    # Shutdown sequence
+    logger.info(f"Shutting down {settings.APP_NAME}...")
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    version=settings.VERSION,
+    description="Autonomous Local AI Video Clipping Factory",
+    lifespan=lifespan,
+)
+
+# CORS Middleware (Local-first browser access)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register REST Routers
+app.include_router(projects_router)
+app.include_router(videos_router)
+app.include_router(clips_router)
+app.include_router(captions_router)
+app.include_router(models_router)
+app.include_router(providers_router)
+app.include_router(automation_router)
+app.include_router(youtube_router)
+app.include_router(analytics_router)
+app.include_router(system_router)
+app.include_router(websocket_router)
+
+# Mount Static Storage Directory for Video/Thumbnail/Audio Streaming
+app.mount("/storage", StaticFiles(directory=str(settings.STORAGE_DIR)), name="storage")
+
+# Mount Built Frontend if available
+frontend_dist = settings.ROOT_DIR / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+else:
+    @app.get("/")
+    async def index():
+        return {
+            "app": settings.APP_NAME,
+            "version": settings.VERSION,
+            "status": "running",
+            "frontend_dev_url": f"http://localhost:{settings.FRONTEND_PORT}",
+            "docs": f"http://localhost:{settings.PORT}/docs",
+        }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("backend.main:app", host=settings.HOST, port=settings.PORT, reload=True)

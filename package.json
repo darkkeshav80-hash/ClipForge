@@ -1,0 +1,21 @@
+{
+  "name": "clipforge-ai",
+  "version": "1.0.0",
+  "description": "ClipForge AI - Autonomous Local Video Clipping Factory",
+  "scripts": {
+    "frontend": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
+    "backend": "python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload",
+    "start": "concurrently \"npm run backend\" \"npm run frontend\""
+  },
+  "keywords": [
+    "video-editor",
+    "shorts",
+    "reels",
+    "ai-clipping",
+    "opus-clip",
+    "local-ai"
+  ],
+  "author": "ClipForge Team",
+  "license": "MIT"
+}

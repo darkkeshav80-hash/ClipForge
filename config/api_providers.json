@@ -1,0 +1,101 @@
+[
+  {
+    "id": "openai",
+    "name": "OpenAI",
+    "type": "openai",
+    "enabled": false,
+    "api_key": "",
+    "base_url": "https://api.openai.com/v1",
+    "models": ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "o3-mini"],
+    "selected_model": "gpt-4o-mini",
+    "status": "disconnected"
+  },
+  {
+    "id": "gemini",
+    "name": "Google Gemini",
+    "type": "gemini",
+    "enabled": false,
+    "api_key": "",
+    "base_url": "",
+    "models": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
+    "selected_model": "gemini-2.5-flash",
+    "status": "disconnected"
+  },
+  {
+    "id": "anthropic",
+    "name": "Anthropic Claude",
+    "type": "anthropic",
+    "enabled": false,
+    "api_key": "",
+    "base_url": "https://api.anthropic.com/v1",
+    "models": ["claude-3-7-sonnet", "claude-3-5-haiku", "claude-3-5-sonnet"],
+    "selected_model": "claude-3-5-haiku",
+    "status": "disconnected"
+  },
+  {
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "type": "deepseek",
+    "enabled": false,
+    "api_key": "",
+    "base_url": "https://api.deepseek.com/v1",
+    "models": ["deepseek-chat", "deepseek-reasoner"],
+    "selected_model": "deepseek-chat",
+    "status": "disconnected"
+  },
+  {
+    "id": "groq",
+    "name": "Groq LPU",
+    "type": "groq",
+    "enabled": false,
+    "api_key": "",
+    "base_url": "https://api.groq.com/openai/v1",
+    "models": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
+    "selected_model": "llama-3.3-70b-versatile",
+    "status": "disconnected"
+  },
+  {
+    "id": "ollama",
+    "name": "Ollama (Local Free)",
+    "type": "ollama",
+    "enabled": true,
+    "api_key": "",
+    "base_url": "http://localhost:11434",
+    "models": ["llama3.2", "mistral", "qwen2.5", "phi3"],
+    "selected_model": "llama3.2",
+    "status": "connected"
+  },
+  {
+    "id": "openrouter",
+    "name": "OpenRouter",
+    "type": "openrouter",
+    "enabled": false,
+    "api_key": "",
+    "base_url": "https://openrouter.ai/api/v1",
+    "models": ["google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct", "anthropic/claude-3.5-haiku"],
+    "selected_model": "google/gemini-2.0-flash-exp:free",
+    "status": "disconnected"
+  },
+  {
+    "id": "together",
+    "name": "Together AI",
+    "type": "together",
+    "enabled": false,
+    "api_key": "",
+    "base_url": "https://api.together.xyz/v1",
+    "models": ["meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo", "mistralai/Mixtral-8x7B-Instruct-v0.1"],
+    "selected_model": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+    "status": "disconnected"
+  },
+  {
+    "id": "custom",
+    "name": "Custom OpenAI Compatible",
+    "type": "custom",
+    "enabled": false,
+    "api_key": "",
+    "base_url": "http://localhost:8080/v1",
+    "models": ["default-model"],
+    "selected_model": "default-model",
+    "status": "disconnected"
+  }
+]
