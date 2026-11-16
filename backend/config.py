@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import List
 from pydantic_settings import BaseSettings
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -21,10 +22,22 @@ class Settings(BaseSettings):
     THUMBNAILS_DIR: Path = BASE_DIR / "storage" / "thumbnails"
     CAPTIONS_DIR: Path = BASE_DIR / "storage" / "captions"
     TEMP_DIR: Path = BASE_DIR / "storage" / "temp"
+    PREVIEWS_DIR: Path = BASE_DIR / "storage" / "previews"
     MODELS_DIR: Path = BASE_DIR / "models"
     LOGS_DIR: Path = BASE_DIR / "logs"
     CONFIG_DIR: Path = BASE_DIR / "config"
     DATABASE_PATH: Path = BASE_DIR / "storage" / "clipforge.db"
+
+    # Network hardening (local-first: only the local UI may talk to the API)
+    ALLOWED_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ]
+    # Host header allow-list (blocks DNS-rebinding). Add your LAN name/IP here if you set HOST=0.0.0.0
+    ALLOWED_HOSTS: List[str] = ["localhost", "127.0.0.1", "testserver"]
+    MAX_UPLOAD_MB: int = 4096
 
     # Hardware Tuning
     HARDWARE_PROFILE: str = "BALANCED" # ECO | BALANCED | QUALITY
@@ -66,6 +79,7 @@ for d in [
     settings.THUMBNAILS_DIR,
     settings.CAPTIONS_DIR,
     settings.TEMP_DIR,
+    settings.PREVIEWS_DIR,
     settings.MODELS_DIR,
     settings.LOGS_DIR,
     settings.CONFIG_DIR,

@@ -1,10 +1,8 @@
-import os
-import shutil
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from backend.config import settings
-from backend.core.security import validate_video_extension, sanitize_filename
+from backend.core.security import validate_video_extension, unique_filename, validate_public_url
 from backend.video.ffmpeg_engine import ffmpeg_engine
 from backend.core.logger import logger
 
@@ -16,24 +14,33 @@ class URLImportRequest(BaseModel):
 @router.post("/upload")
 async def upload_video(file: UploadFile = File(...)):
     validate_video_extension(file.filename)
-    safe_name = sanitize_filename(file.filename)
-    
-    # Save to uploads directory
+    safe_name = unique_filename(file.filename)
     target_path = settings.UPLOADS_DIR / safe_name
-    
-    # Write in chunks
+
+    # Stream to disk in chunks, enforcing a size limit
+    max_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024
+    written = 0
     try:
         with open(target_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            while chunk := await file.read(1024 * 1024):
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(status_code=413, detail=f"File too large. Limit is {settings.MAX_UPLOAD_MB} MB.")
+                buffer.write(chunk)
+    except HTTPException:
+        target_path.unlink(missing_ok=True)
+        raise
     except Exception as e:
+        target_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"Failed to save upload: {str(e)}")
 
-    # Extract probe information
+    # Extract probe information: reject files ffprobe can't read instead of inventing metadata
     try:
         probe = ffmpeg_engine.probe_video(target_path)
     except Exception as e:
         logger.warning(f"FFprobe failed on uploaded video: {e}")
-        probe = {"duration": 60.0, "width": 1920, "height": 1080, "fps": 30.0}
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail="Could not read this file as a video. It may be corrupt or not a real video.")
 
     # Extract thumbnail
     thumb_name = f"{Path(safe_name).stem}_thumb.jpg"
@@ -58,9 +65,7 @@ async def upload_video(file: UploadFile = File(...)):
 
 @router.post("/import-url")
 async def import_url(req: URLImportRequest):
-    url = req.url.strip()
-    if not url.startswith("http://") and not url.startswith("https://"):
-        raise HTTPException(status_code=400, detail="Invalid URL scheme. Must start with http:// or https://")
+    url = validate_public_url(req.url.strip())
 
     logger.info(f"Downloading video from URL via yt-dlp: {url}")
     
@@ -73,6 +78,7 @@ async def import_url(req: URLImportRequest):
             'quiet': True,
             'no_warnings': True,
             'merge_output_format': 'mp4',
+            'noplaylist': True,
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)

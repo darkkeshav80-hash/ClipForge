@@ -7,6 +7,11 @@ from backend.core.logger import logger
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
+VALID_PROJECT_STATUSES = {
+    "draft", "idle", "pending", "queued", "importing", "transcribing", "analyzing", "editing",
+    "rendering", "running", "completed", "ready", "interrupted", "error", "failed",
+}
+
 @router.get("", response_model=List[Dict[str, Any]])
 async def list_projects():
     async with db.get_connection() as conn:
@@ -89,6 +94,8 @@ async def apply_captions_to_project(project_id: str, data: Dict[str, Any]):
 
 @router.patch("/{project_id}", response_model=Dict[str, Any])
 async def update_project(project_id: str, data: Dict[str, Any]):
+    if "status" in data and data["status"] not in VALID_PROJECT_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status '{data['status']}'.")
     fields = []
     values = []
     for k in ["name", "description", "caption_preset", "status"]:
@@ -109,5 +116,4 @@ async def delete_project(project_id: str):
     async with db.get_connection() as conn:
         await conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         await conn.commit()
-    return {"success": True, "message": f"Project {project_id} deleted."}
     return {"success": True, "message": f"Project {project_id} deleted."}

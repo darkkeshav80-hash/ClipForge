@@ -4,6 +4,7 @@ from typing import List, Dict, Any
 from backend.core.db import db
 from backend.providers.adapter_registry import provider_registry
 from backend.core.logger import logger
+from backend.core.security import mask_api_key, is_masked_key
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 
@@ -17,12 +18,26 @@ async def list_providers():
             d = dict(r)
             d["enabled"] = bool(d["enabled"])
             d["models"] = json.loads(d.get("models_json") or "[]")
+            d["api_key"] = mask_api_key(d["api_key"]) if d.get("api_key") else ""
             result.append(d)
         return result
 
 @router.put("/{provider_id}", response_model=Dict[str, Any])
 async def update_provider(provider_id: str, data: Dict[str, Any]):
+    base_url = (data.get("base_url") or "").strip()
+    if base_url and not base_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="base_url must start with http:// or https://")
+
     async with db.get_connection() as conn:
+        cursor = await conn.execute("SELECT api_key FROM ai_providers WHERE id = ?", (provider_id,))
+        existing = await cursor.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Provider not found")
+
+        # The API never returns real keys, so a missing or masked key means "unchanged".
+        incoming_key = data.get("api_key")
+        api_key = (existing["api_key"] or "") if (incoming_key is None or is_masked_key(incoming_key)) else incoming_key
+
         await conn.execute("""
             UPDATE ai_providers SET
                 enabled = ?,
@@ -34,15 +49,15 @@ async def update_provider(provider_id: str, data: Dict[str, Any]):
             WHERE id = ?
         """, (
             1 if data.get("enabled") else 0,
-            data.get("api_key", ""),
-            data.get("base_url", ""),
+            api_key,
+            base_url,
             json.dumps(data.get("models", [])),
             data.get("selected_model", ""),
             data.get("status", "disconnected"),
             provider_id
         ))
         await conn.commit()
-    return data
+    return {**data, "api_key": mask_api_key(api_key) if api_key else ""}
 
 @router.post("/{provider_id}/test")
 async def test_provider_endpoint(provider_id: str):

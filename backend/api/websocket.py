@@ -1,6 +1,7 @@
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Set
+from backend.config import settings
 from backend.core.logger import logger, PipelineLogEmitter
 
 router = APIRouter()
@@ -35,6 +36,11 @@ PipelineLogEmitter.set_ws_manager(manager)
 
 @router.websocket("/ws/logs")
 async def websocket_logs_endpoint(websocket: WebSocket):
+    # Browsers don't apply CORS to WebSockets, so verify the Origin ourselves.
+    origin = websocket.headers.get("origin")
+    if origin and origin not in settings.ALLOWED_ORIGINS:
+        await websocket.close(code=1008)
+        return
     await manager.connect(websocket)
     try:
         while True:
