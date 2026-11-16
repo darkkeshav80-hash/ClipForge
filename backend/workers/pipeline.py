@@ -10,6 +10,7 @@ from backend.core.logger import logger, PipelineLogEmitter
 from backend.core.db import db
 from backend.video.ffmpeg_engine import ffmpeg_engine
 from backend.video.face_tracker import face_tracker
+from backend.video.punch_in import calculate_punch_moments
 from backend.video.silence_remover import silence_detector
 from backend.ai.transcription import transcriber
 from backend.ai.analyzer import video_analyzer
@@ -250,6 +251,7 @@ class PipelineWorker:
             max_duration=max_dur,
             min_viral_score=min_viral,
             default_preset=default_preset,
+            video_path=source_video,
         )
 
         await self._update_project_status(project_id, "selecting", 60.0, stage_progress=100.0)
@@ -306,11 +308,24 @@ class PipelineWorker:
                     clip_id
                 )
 
-                # Compute speaker face center
-                crop_center_x = await asyncio.to_thread(
-                    face_tracker.calculate_speaker_center,
+                # Compute speaker face analysis (Single Face Center vs Dual-Speaker Podcast Split)
+                speaker_analysis = await asyncio.to_thread(
+                    face_tracker.analyze_speakers,
                     source_video, clip["start_time"], clip["duration"]
                 )
+                crop_center_x = speaker_analysis["single_center_x"]
+                speaker_layout = speaker_analysis["layout"]
+                left_c = speaker_analysis["left_center_x"]
+                right_c = speaker_analysis["right_center_x"]
+
+                if speaker_layout == "split":
+                    await PipelineLogEmitter.emit(
+                        "editing",
+                        f"Podcast 2-shot detected: stacking speakers vertically in 9:16 (L:{left_c}, R:{right_c})",
+                        "info",
+                        project_id,
+                        clip_id
+                    )
 
                 # STAGE 6: CAPTIONING (Generate Non-Overlapping Kinetic ASS Subtitles)
                 preset_name = clip.get("caption_preset") or project.get("caption_preset") or "mrbeast"
@@ -350,6 +365,22 @@ class PipelineWorker:
                 plan = clip.get("editing_plan", {})
                 kws = plan.get("keywords", [])
 
+                # Calculate dynamic hook-beat punch-in zoom timestamps
+                punch_moments = calculate_punch_moments(
+                    words=clip_words,
+                    clip_start_offset=clip["start_time"],
+                    duration=clip["duration"],
+                    keywords=kws
+                )
+                if punch_moments:
+                    await PipelineLogEmitter.emit(
+                        "editing",
+                        f"Dynamic punch-in zooms scheduled at {punch_moments}s on hook words",
+                        "info",
+                        project_id,
+                        clip_id
+                    )
+
                 ass_writer.generate_ass(
                     words=clip_words,
                     preset=preset_conf,
@@ -383,7 +414,7 @@ class PipelineWorker:
                 target_aspect = clip.get("aspect_ratio", "9:16")
                 await PipelineLogEmitter.emit(
                     "rendering",
-                    f"Rendering {target_aspect} short with FFmpeg (hardware balanced)...",
+                    f"Rendering {target_aspect} short with FFmpeg ({speaker_layout} layout, dynamic zooms)...",
                     "info",
                     project_id,
                     clip_id
@@ -397,6 +428,11 @@ class PipelineWorker:
                     output_clip=output_clip_path,
                     aspect_ratio=target_aspect,
                     crop_center_x=crop_center_x,
+                    layout=speaker_layout,
+                    left_center_x=left_c,
+                    right_center_x=right_c,
+                    punch_moments=punch_moments,
+                    zoom_in=bool(plan.get("smart_zoom", True)),
                     ass_subtitles_path=ass_path,
                     normalize_audio=True,
                     threads=settings.FFMPEG_THREADS,

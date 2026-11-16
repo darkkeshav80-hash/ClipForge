@@ -5,11 +5,15 @@ import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from backend.core.logger import logger
+from backend.video.split_layout import build_split_filtergraph
+from backend.video.punch_in import generate_zoompan_expression
 
 class FFmpegEngine:
     """
     High-Performance Video Manipulation Engine:
-    - Accurate face-centered aspect ratio cropping
+    - Accurate face-centered horizontal cropping (Single Speaker)
+    - Dual-Speaker Podcast Split Layout (stacked 1080x960 top/bottom 50%)
+    - Dynamic hook-beat punch-in zooms with smoothstep easing
     - Burn-in kinetic ASS subtitles with safe-style fallback
     - CPU first with optional AMD AMF GPU encoding
     - EBU R128 audio normalization, yuv420p, and faststart
@@ -110,6 +114,10 @@ class FFmpegEngine:
         output_clip: Path,
         aspect_ratio: str = "9:16",
         crop_center_x: float = 0.5,
+        layout: str = "single",
+        left_center_x: float = 0.3,
+        right_center_x: float = 0.7,
+        punch_moments: Optional[List[float]] = None,
         ass_subtitles_path: Optional[Path] = None,
         normalize_audio: bool = True,
         threads: int = 4,
@@ -120,12 +128,12 @@ class FFmpegEngine:
     ) -> Tuple[Path, bool, str]:
         """
         Renders cropped video with burned-in subtitles.
-        Guarantees:
+        Supports:
+        - Single speaker face-centered horizontal cropping
+        - Dual-speaker podcast split layout (stacked 1080x960 top/bottom)
+        - Dynamic hook-beat punch-in zooms with smoothstep easing
         - Clamps duration so clips never exceed max_duration_clamp
-        - Accurate face-centered horizontal cropping for 9:16
         - Retries with safe basic subtitles if custom ASS fails (NEVER silently drops captions!)
-        - Adds -pix_fmt yuv420p and -movflags +faststart
-        Returns: (output_clip_path, fallback_style_used, warning_message)
         """
         output_clip.parent.mkdir(parents=True, exist_ok=True)
 
@@ -145,12 +153,17 @@ class FFmpegEngine:
             scale_flag = "lanczos"
             sw_enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
 
-        # 1. Build Base Video Crop Filter
-        if aspect_ratio == "9:16":
+        # 1. Build Base Video Filter (Single Face Crop vs Dual-Speaker Podcast Split)
+        is_complex = False
+        if layout == "split" and aspect_ratio == "9:16":
+            # Probe input resolution for accurate split geometry
+            probe = self.probe_video(input_video)
+            orig_w = probe.get("width", 1920)
+            orig_h = probe.get("height", 1080)
+            base_vf = build_split_filtergraph(orig_w, orig_h, scale_w, scale_h, left_center_x, right_center_x)
+            is_complex = True
+        elif aspect_ratio == "9:16":
             # Correct face centering formula:
-            # Crop width = ih * 9 / 16
-            # Center of crop is placed at cx * iw
-            # crop_x = min(max(cx * iw - crop_w / 2, 0), iw - crop_w)
             base_vf = (
                 f"crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)':"
                 f"x='min(max({cx}*iw - min(iw,ih*9/16)/2, 0), iw - min(iw,ih*9/16))':"
@@ -161,32 +174,44 @@ class FFmpegEngine:
             base_vf = (
                 f"crop=w='min(iw,ih)':h='min(iw,ih)':"
                 f"x='min(max({cx}*iw - min(iw,ih)/2, 0), iw - min(iw,ih))':"
-                f"y='(ih - min(iw,ih))/2',"
+                f"y='(ih - min(ih,iw*16/9))/2',"
                 f"scale=1080:1080:flags=lanczos"
             )
         else: # 16:9
             base_vf = "scale=1920:1080:flags=lanczos"
 
-        if zoom_in and not is_preview:
-            base_vf += ",zoompan=z='min(zoom+0.001,1.08)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30"
+        # Apply Dynamic Hook-Beat Punch-In Zooms if enabled
+        if zoom_in and not is_preview and not is_complex:
+            if punch_moments:
+                punch_expr = generate_zoompan_expression(punch_moments, clamped_duration, fps=30.0)
+                if punch_expr:
+                    base_vf += f",{punch_expr}"
+            else:
+                base_vf += ",zoompan=z='min(zoom+0.001,1.08)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30"
 
         audio_filter = "loudnorm=I=-14:LRA=11:TP=-1.5" if normalize_audio and not is_preview else "anull"
 
         # Codec choices: CPU (libx264) and AMD AMF (h264_amf)
         hw_enc = ["-c:v", "h264_amf", "-quality", "speed" if is_preview else "balanced", "-b:v", "8M" if is_preview else "14M"]
 
-        def build_cmd(vf: str, enc_args: List[str]) -> List[str]:
+        def build_cmd(vf: str, enc_args: List[str], use_filter_complex: bool = False) -> List[str]:
             cmd = [
                 self.ffmpeg_path,
                 "-y",
                 "-ss", f"{max(0.0, start_time):.2f}",
                 "-t", f"{clamped_duration:.2f}",
                 "-i", str(input_video),
-                "-vf", vf,
+            ]
+            if use_filter_complex:
+                cmd.extend(["-filter_complex", vf, "-map", "[v]", "-map", "0:a?"])
+            else:
+                cmd.extend(["-vf", vf])
+
+            cmd.extend([
                 "-af", audio_filter,
                 *enc_args,
                 "-pix_fmt", "yuv420p",
-            ]
+            ])
             if is_preview:
                 cmd.extend(["-an"])
             else:
@@ -204,34 +229,38 @@ class FFmpegEngine:
             clean_path = str(ass_subtitles_path).replace("\\", "/").replace(":", "\\:")
             clean_sub_filter = f"ass='{clean_path}'"
 
-        # List of render attempts in order of preference:
-        # 1. Custom ASS with AMF (if requested)
-        # 2. Custom ASS with CPU libx264
-        # 3. Safe Fallback ASS with CPU libx264 (if custom ASS fails)
         attempts = []
-        if clean_sub_filter:
-            vf_with_ass = f"{base_vf},{clean_sub_filter}"
-            if use_amf:
-                attempts.append((vf_with_ass, hw_enc, "AMD GPU + Custom Subtitles", False))
-            attempts.append((vf_with_ass, sw_enc, "CPU + Custom Subtitles", False))
-
-            # Build safe fallback ASS if needed
-            safe_ass = ass_subtitles_path.with_name(ass_subtitles_path.stem + "_safe.ass")
-            try:
-                self._generate_safe_ass(ass_subtitles_path, safe_ass)
-                safe_clean = str(safe_ass).replace("\\", "/").replace(":", "\\:")
-                vf_safe = f"{base_vf},ass='{safe_clean}'"
-                attempts.append((vf_safe, sw_enc, "CPU + Safe Subtitles Fallback", True))
-            except Exception as e:
-                logger.warning(f"Could not build safe fallback ASS: {e}")
+        if is_complex:
+            # Complex filter graph for vstack split
+            if clean_sub_filter:
+                complex_vf = f"{base_vf.rstrip('[v]')}[stacked];[stacked]{clean_sub_filter}[v]"
+                attempts.append((complex_vf, sw_enc, "CPU + Split Layout + Subtitles", False, True))
+            else:
+                attempts.append((base_vf, sw_enc, "CPU + Split Layout", False, True))
         else:
-            if use_amf:
-                attempts.append((base_vf, hw_enc, "AMD GPU", False))
-            attempts.append((base_vf, sw_enc, "CPU", False))
+            if clean_sub_filter:
+                vf_with_ass = f"{base_vf},{clean_sub_filter}"
+                if use_amf:
+                    attempts.append((vf_with_ass, hw_enc, "AMD GPU + Custom Subtitles", False, False))
+                attempts.append((vf_with_ass, sw_enc, "CPU + Custom Subtitles", False, False))
+
+                safe_ass = ass_subtitles_path.with_name(ass_subtitles_path.stem + "_safe.ass")
+                try:
+                    self._generate_safe_ass(ass_subtitles_path, safe_ass)
+                    safe_clean = str(safe_ass).replace("\\", "/").replace(":", "\\:")
+                    vf_safe = f"{base_vf},ass='{safe_clean}'"
+                    attempts.append((vf_safe, sw_enc, "CPU + Safe Subtitles Fallback", True, False))
+                except Exception as e:
+                    logger.warning(f"Could not build safe fallback ASS: {e}")
+            else:
+                if use_amf:
+                    attempts.append((base_vf, hw_enc, "AMD GPU", False, False))
+                attempts.append((base_vf, sw_enc, "CPU", False, False))
 
         last_error = ""
-        for vf, enc, label, is_fallback in attempts:
-            cmd = build_cmd(vf, enc)
+        for item in attempts:
+            vf, enc, label, is_fallback, use_fc = item
+            cmd = build_cmd(vf, enc, use_filter_complex=use_fc)
             logger.info(f"Rendering attempt ({label}): {' '.join(cmd[:12])}...")
             res = subprocess.run(cmd, capture_output=True, text=True)
             if res.returncode == 0 and output_clip.exists() and output_clip.stat().st_size > 10000:
@@ -249,7 +278,6 @@ class FFmpegEngine:
         safe_lines = []
         for line in lines:
             if line.startswith("Style: Main"):
-                # Replace font with universal Nirmala UI / Arial
                 safe_lines.append(
                     "Style: Main,Nirmala UI,72,&H00FFFFFF&,&H00FFE600&,&H00000000&,&H80000000&,-1,0,0,0,100,100,1,0,1,6,2,2,70,70,300,1"
                 )

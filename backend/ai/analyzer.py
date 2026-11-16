@@ -1,8 +1,10 @@
 import re
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from backend.core.logger import logger
 from backend.ai.scorer import viral_scorer
 from backend.ai.editing_brain import editing_brain
+from backend.video.scene_detection import detect_scene_cuts, snap_to_scene_boundaries
 
 def detect_category(text: str) -> str:
     """Accurately classifies category based on conversational markers."""
@@ -38,6 +40,7 @@ class VideoAnalyzer:
         max_duration: float = 60.0,
         min_viral_score: int = 70,
         default_preset: str = "mrbeast-bold",
+        video_path: Optional[Path] = None,
     ) -> List[Dict[str, Any]]:
         words = transcript_data.get("words", [])
         if not words:
@@ -46,6 +49,13 @@ class VideoAnalyzer:
 
         total_duration = words[-1]["end"] - words[0]["start"]
         logger.info(f"Analyzing {len(words)} words over {total_duration:.1f}s for viral moments...")
+
+        # Detect camera transitions for clean moment boundary snapping
+        scene_cuts = []
+        if video_path and video_path.exists():
+            scene_cuts = detect_scene_cuts(video_path)
+            if scene_cuts:
+                logger.info(f"Scene detection found {len(scene_cuts)} shot transitions for boundary snapping.")
 
         # Group words into clean sentence clusters
         candidate_segments = []
@@ -93,6 +103,18 @@ class VideoAnalyzer:
                 "transcript": " ".join([cw["word"] for cw in words]),
                 "words": words,
             }]
+
+        # Snap candidate moments to nearest camera cuts for seamless transitions
+        if scene_cuts:
+            for seg in candidate_segments:
+                s_start, s_end = snap_to_scene_boundaries(seg["start_time"], seg["end_time"], scene_cuts)
+                seg["start_time"] = s_start
+                seg["end_time"] = s_end
+                seg["duration"] = round(s_end - s_start, 2)
+                matching_words = [w for w in words if w["start"] >= s_start and w["end"] <= s_end]
+                if matching_words:
+                    seg["words"] = matching_words
+                    seg["transcript"] = " ".join([cw["word"] for cw in matching_words])
 
         # Heuristic pre-ranking to evaluate top moments without hitting LLM rate limits
         def heuristic_rank(seg: Dict[str, Any]) -> float:
