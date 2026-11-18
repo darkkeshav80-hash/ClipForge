@@ -123,7 +123,7 @@ async def import_url(req: URLImportRequest):
                     str(p)
                 ]
                 try:
-                    res_dvr = subprocess.run(cmd_dvr, capture_output=True, text=True, timeout=min(duration_sec + 60, 180))
+                    res_dvr = subprocess.run(cmd_dvr, capture_output=True, text=True, timeout=max(300, duration_sec + 60))
                     if res_dvr.returncode == 0 and p.exists() and p.stat().st_size > 10000:
                         captured = True
                     else:
