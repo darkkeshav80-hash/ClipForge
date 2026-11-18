@@ -1,7 +1,10 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import asyncio
 import unittest
 from unittest.mock import patch, MagicMock
-from pathlib import Path
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 

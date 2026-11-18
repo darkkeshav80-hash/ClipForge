@@ -1,4 +1,5 @@
 import asyncio
+import re
 from pathlib import Path
 import subprocess
 from typing import Optional, List
@@ -166,8 +167,115 @@ async def import_url(req: URLImportRequest):
 
         is_live = bool(info.get('is_live') or info.get('live_status') == 'is_live')
 
-        # If explicit trim range was requested (start_time & end_time)
-        if req.start_time is not None and req.end_time is not None:
+        if is_live:
+            logger.info(f"Active livestream detected for {url}. Capturing live segment via FFmpeg...")
+            if req.start_time is not None and req.end_time is not None:
+                start_time = max(0.0, float(req.start_time))
+                end_time = float(req.end_time)
+                if end_time <= start_time:
+                    raise HTTPException(status_code=400, detail="End time must be greater than start time.")
+                duration_sec = max(5, min(int(end_time - start_time), 3600))
+                start_seek = start_time
+            else:
+                duration_sec = max(10, min(int(req.live_clip_minutes or 10) * 60, 3600))
+                start_seek = None
+
+            formats = info.get('formats', [])
+            v_fmts = [f for f in formats if f.get('vcodec') != 'none' and f.get('height') and f['height'] <= 1080 and f.get('url')]
+            a_fmts = [f for f in formats if f.get('acodec') != 'none' and f.get('url')]
+
+            if not v_fmts:
+                v_fmts = [f for f in formats if f.get('url')]
+
+            best_v = sorted(v_fmts, key=lambda x: x.get('height', 0), reverse=True)[0] if v_fmts else None
+            best_a = a_fmts[-1] if a_fmts else None
+
+            if not best_v:
+                raise HTTPException(status_code=400, detail="Could not find streamable format for this live stream.")
+
+            clean_title = "".join(c for c in (info.get("title") or "livestream") if c.isalnum() or c in (" ", "-", "_")).strip()[:40] or "livestream"
+            video_id = re.sub(r'[^a-zA-Z0-9_-]', '', str(info.get("id") or "live"))[:20]
+            safe_name = unique_filename(f"{clean_title}-{video_id}.mp4")
+            p = settings.UPLOADS_DIR / safe_name
+
+            def _capture_live_sync() -> Path:
+                captured = False
+
+                # 1. Seek into HLS DVR if start_seek is provided
+                if start_seek is not None and start_seek > 0:
+                    cmd_seek = ['ffmpeg', '-y']
+                    if best_a and best_v['url'] != best_a['url']:
+                        cmd_seek.extend(['-ss', str(start_seek), '-i', best_v['url'], '-ss', str(start_seek), '-i', best_a['url']])
+                    else:
+                        cmd_seek.extend(['-ss', str(start_seek), '-i', best_v['url']])
+                    cmd_seek.extend(['-t', str(duration_sec), '-c', 'copy', '-bsf:a', 'aac_adtstoasc', str(p)])
+                    try:
+                        res_seek = subprocess.run(cmd_seek, capture_output=True, text=True, timeout=max(120, duration_sec + 30))
+                        if res_seek.returncode == 0 and p.exists() and p.stat().st_size > 10000:
+                            captured = True
+                        else:
+                            p.unlink(missing_ok=True)
+                    except Exception:
+                        p.unlink(missing_ok=True)
+
+                # 2. DVR seek backwards from live head (-sseof -duration_sec)
+                if not captured and req.live_mode != "next":
+                    cmd_dvr = ['ffmpeg', '-y']
+                    if best_a and best_v['url'] != best_a['url']:
+                        cmd_dvr.extend(['-sseof', f'-{duration_sec}', '-i', best_v['url'], '-sseof', f'-{duration_sec}', '-i', best_a['url']])
+                    else:
+                        cmd_dvr.extend(['-sseof', f'-{duration_sec}', '-i', best_v['url']])
+                    cmd_dvr.extend(['-t', str(duration_sec), '-c', 'copy', '-bsf:a', 'aac_adtstoasc', str(p)])
+                    try:
+                        res_dvr = subprocess.run(cmd_dvr, capture_output=True, text=True, timeout=max(120, duration_sec + 30))
+                        if res_dvr.returncode == 0 and p.exists() and p.stat().st_size > 10000:
+                            captured = True
+                        else:
+                            p.unlink(missing_ok=True)
+                    except Exception:
+                        p.unlink(missing_ok=True)
+
+                # 3. Fallback: capture live stream head
+                if not captured:
+                    cmd_live = ['ffmpeg', '-y']
+                    if best_a and best_v['url'] != best_a['url']:
+                        cmd_live.extend(['-i', best_v['url'], '-i', best_a['url']])
+                    else:
+                        cmd_live.extend(['-i', best_v['url']])
+                    cmd_live.extend(['-t', str(duration_sec), '-c', 'copy', '-bsf:a', 'aac_adtstoasc', str(p)])
+                    try:
+                        res_live = subprocess.run(cmd_live, capture_output=True, text=True, timeout=max(120, duration_sec + 30))
+                        if res_live.returncode == 0 and p.exists() and p.stat().st_size > 10000:
+                            captured = True
+                        else:
+                            p.unlink(missing_ok=True)
+                    except Exception:
+                        p.unlink(missing_ok=True)
+
+                # 4. Transcode fallback if copy failed
+                if not captured:
+                    cmd_tc = ['ffmpeg', '-y']
+                    if best_a and best_v['url'] != best_a['url']:
+                        cmd_tc.extend(['-i', best_v['url'], '-i', best_a['url']])
+                    else:
+                        cmd_tc.extend(['-i', best_v['url']])
+                    cmd_tc.extend(['-t', str(duration_sec), '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', str(p)])
+                    try:
+                        res_tc = subprocess.run(cmd_tc, capture_output=True, text=True, timeout=max(120, duration_sec + 30))
+                        if res_tc.returncode == 0 and p.exists() and p.stat().st_size > 10000:
+                            captured = True
+                    except Exception:
+                        p.unlink(missing_ok=True)
+
+                if not captured or not p.exists() or p.stat().st_size == 0:
+                    p.unlink(missing_ok=True)
+                    raise HTTPException(status_code=500, detail="Failed to capture video segment from active live stream.")
+
+                return p
+
+            p = await asyncio.to_thread(_capture_live_sync)
+
+        elif req.start_time is not None and req.end_time is not None:
             start_time = max(0.0, float(req.start_time))
             end_time = float(req.end_time)
             if end_time <= start_time:
@@ -175,129 +283,59 @@ async def import_url(req: URLImportRequest):
 
             from yt_dlp.utils import download_range_func
             clean_title = "".join(c for c in (info.get("title") or "video") if c.isalnum() or c in (" ", "-", "_")).strip()[:40] or "video"
-            video_id = info.get("id", "yt")
+            video_id = re.sub(r'[^a-zA-Z0-9_-]', '', str(info.get("id") or "yt"))[:20]
             safe_name = unique_filename(f"{clean_title}-{video_id}_{int(start_time)}_{int(end_time)}.mp4")
             outtmpl = str(settings.UPLOADS_DIR / f"{Path(safe_name).stem}.%(ext)s")
 
-            ydl_opts = {
-                'format': 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                'outtmpl': outtmpl,
-                'quiet': True,
-                'no_warnings': True,
-                'noplaylist': True,
-                'force_keyframes_at_cuts': True,
-                'download_ranges': download_range_func(None, [(start_time, end_time)]),
-                'merge_output_format': 'mp4',
-            }
-            if is_live:
-                ydl_opts['live_from_start'] = True
+            def _download_range_sync() -> Path:
+                ydl_opts = {
+                    'format': 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                    'outtmpl': outtmpl,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'noplaylist': True,
+                    'force_keyframes_at_cuts': True,
+                    'download_ranges': download_range_func(None, [(start_time, end_time)]),
+                    'merge_output_format': 'mp4',
+                }
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                target = settings.UPLOADS_DIR / f"{Path(safe_name).stem}.mp4"
+                if not target.exists():
+                    candidates = list(settings.UPLOADS_DIR.glob(f"{Path(safe_name).stem}.*"))
+                    for cand in candidates:
+                        if cand.is_file() and cand.stat().st_size > 0:
+                            target = cand
+                            break
 
-            p = settings.UPLOADS_DIR / f"{Path(safe_name).stem}.mp4"
-            if not p.exists():
-                candidates = list(settings.UPLOADS_DIR.glob(f"{Path(safe_name).stem}.*"))
-                for cand in candidates:
-                    if cand.is_file() and cand.stat().st_size > 0:
-                        p = cand
-                        break
+                if not target.exists() or target.stat().st_size == 0:
+                    raise HTTPException(status_code=500, detail="Failed to download trimmed video segment.")
+                return target
 
-            if not p.exists() or p.stat().st_size == 0:
-                raise HTTPException(status_code=500, detail="Failed to download trimmed video segment.")
-        elif is_live:
-            logger.info(f"Active livestream detected for {url}. Capturing live window...")
-            duration_sec = max(30, min(int(req.live_clip_minutes or 10) * 60, 3600))
+            p = await asyncio.to_thread(_download_range_sync)
 
-            formats = [f for f in info.get('formats', []) if f.get('height') and f['height'] <= 1080 and f.get('url')]
-            if not formats:
-                formats = [f for f in info.get('formats', []) if f.get('url')]
-
-            stream_url = None
-            if formats:
-                best_fmt = sorted(formats, key=lambda x: x.get('height', 0), reverse=True)[0]
-                stream_url = best_fmt.get('url')
-            if not stream_url:
-                stream_url = info.get('url')
-
-            if not stream_url:
-                raise HTTPException(status_code=400, detail="Could not find streamable format for this live stream.")
-
-            clean_title = "".join(c for c in (info.get("title") or "livestream") if c.isalnum() or c in (" ", "-", "_")).strip()[:40] or "livestream"
-            video_id = info.get("id", "live")
-            safe_name = unique_filename(f"{clean_title}-{video_id}.mp4")
-            p = settings.UPLOADS_DIR / safe_name
-
-            captured = False
-            # 1. Try DVR seek backwards if live_mode != "next"
-            if req.live_mode != "next":
-                cmd_dvr = [
-                    'ffmpeg', '-y',
-                    '-sseof', f'-{duration_sec}',
-                    '-i', stream_url,
-                    '-t', str(duration_sec),
-                    '-c', 'copy',
-                    '-bsf:a', 'aac_adtstoasc',
-                    str(p)
-                ]
-                try:
-                    res_dvr = subprocess.run(cmd_dvr, capture_output=True, text=True, timeout=max(300, duration_sec + 60))
-                    if res_dvr.returncode == 0 and p.exists() and p.stat().st_size > 10000:
-                        captured = True
-                    else:
-                        p.unlink(missing_ok=True)
-                except subprocess.TimeoutExpired:
-                    logger.warning("DVR capture timed out; falling back to live head")
-                    p.unlink(missing_ok=True)
-
-            # 2. If DVR was not captured or live_mode is "next", capture from live head
-            if not captured:
-                cmd_live = [
-                    'ffmpeg', '-y',
-                    '-i', stream_url,
-                    '-t', str(duration_sec),
-                    '-c', 'copy',
-                    '-bsf:a', 'aac_adtstoasc',
-                    str(p)
-                ]
-                try:
-                    res_live = subprocess.run(cmd_live, capture_output=True, text=True, timeout=duration_sec + 60)
-                    if res_live.returncode == 0 and p.exists() and p.stat().st_size > 10000:
-                        captured = True
-                    else:
-                        p.unlink(missing_ok=True)
-                        cmd_tc = [
-                            'ffmpeg', '-y',
-                            '-i', stream_url,
-                            '-t', str(duration_sec),
-                            '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac',
-                            str(p)
-                        ]
-                        res_tc = subprocess.run(cmd_tc, capture_output=True, text=True, timeout=duration_sec + 60)
-                        if res_tc.returncode == 0 and p.exists() and p.stat().st_size > 10000:
-                            captured = True
-                except subprocess.TimeoutExpired:
-                    logger.warning("Live-head capture timed out")
-                    p.unlink(missing_ok=True)
-
-            if not captured or not p.exists() or p.stat().st_size == 0:
-                raise HTTPException(status_code=500, detail="Failed to capture video segment from active live stream.")
         else:
             outtmpl = str(settings.UPLOADS_DIR / "%(title).50s-%(id)s.%(ext)s")
-            ydl_opts = {
-                'format': 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                'outtmpl': outtmpl,
-                'quiet': True,
-                'no_warnings': True,
-                'merge_output_format': 'mp4',
-                'noplaylist': True,
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                downloaded = ydl.prepare_filename(info)
-                p = Path(downloaded)
-                if not p.exists() and p.with_suffix('.mp4').exists():
-                    p = p.with_suffix('.mp4')
+
+            def _download_full_sync() -> Path:
+                ydl_opts = {
+                    'format': 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                    'outtmpl': outtmpl,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'merge_output_format': 'mp4',
+                    'noplaylist': True,
+                }
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    inf = ydl.extract_info(url, download=True)
+                    downloaded = ydl.prepare_filename(inf)
+                    target = Path(downloaded)
+                    if not target.exists() and target.with_suffix('.mp4').exists():
+                        target = target.with_suffix('.mp4')
+                    return target
+
+            p = await asyncio.to_thread(_download_full_sync)
 
         # Probe the downloaded video
         try:

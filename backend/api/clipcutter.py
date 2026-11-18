@@ -191,55 +191,204 @@ async def cut_clip(req: ClipCutRequest):
 
         safe_stem = f"clipcut_{video_id}_{int(req.start)}_{int(req.end)}_{uuid.uuid4().hex[:6]}"
 
-        def _download_range_sync() -> Path:
-            out_tmpl = str(settings.UPLOADS_DIR / f"{safe_stem}.%(ext)s")
+        if is_live:
+            duration_sec = max(1, int(req.end - req.start))
+            start_seek = max(0.0, float(req.start))
+            formats = info.get("formats", [])
 
             if is_audio:
-                fmt = "bestaudio[ext=m4a]/bestaudio"
-            else:
-                q = req.quality
-                fmt = f"bestvideo[height<={q}][ext=mp4]+bestaudio[ext=m4a]/best[height<={q}][ext=mp4]/best[height<={q}]"
+                a_fmts = [f for f in formats if f.get("acodec") != "none" and f.get("url")]
+                best_a = a_fmts[-1] if a_fmts else None
+                if not best_a:
+                    raise HTTPException(status_code=400, detail="No audio stream found for this live stream.")
 
-            ydl_opts = {
-                "format": fmt,
-                "outtmpl": out_tmpl,
-                "quiet": True,
-                "no_warnings": True,
-                "noplaylist": True,
-                "force_keyframes_at_cuts": True,
-                "download_ranges": download_range_func(None, [(req.start, req.end)]),
-            }
-            if not is_audio:
-                ydl_opts["merge_output_format"] = "mp4"
-            if is_live:
-                ydl_opts["live_from_start"] = True
+                def _capture_live_audio_sync() -> Path:
+                    target = settings.UPLOADS_DIR / f"{safe_stem}.m4a"
+                    captured = False
+                    if start_seek > 0:
+                        cmd = ["ffmpeg", "-y", "-ss", str(start_seek), "-i", best_a["url"], "-t", str(duration_sec), "-c", "copy", "-bsf:a", "aac_adtstoasc", str(target)]
+                        try:
+                            r = subprocess.run(cmd, capture_output=True, timeout=max(60, duration_sec + 20))
+                            if r.returncode == 0 and target.exists() and target.stat().st_size > 5000:
+                                captured = True
+                            else:
+                                target.unlink(missing_ok=True)
+                        except Exception:
+                            target.unlink(missing_ok=True)
+
+                    if not captured:
+                        cmd = ["ffmpeg", "-y", "-sseof", f"-{duration_sec}", "-i", best_a["url"], "-t", str(duration_sec), "-c", "copy", "-bsf:a", "aac_adtstoasc", str(target)]
+                        try:
+                            r = subprocess.run(cmd, capture_output=True, timeout=max(60, duration_sec + 20))
+                            if r.returncode == 0 and target.exists() and target.stat().st_size > 5000:
+                                captured = True
+                            else:
+                                target.unlink(missing_ok=True)
+                        except Exception:
+                            target.unlink(missing_ok=True)
+
+                    if not captured:
+                        cmd = ["ffmpeg", "-y", "-i", best_a["url"], "-t", str(duration_sec), "-c", "copy", "-bsf:a", "aac_adtstoasc", str(target)]
+                        try:
+                            r = subprocess.run(cmd, capture_output=True, timeout=max(60, duration_sec + 20))
+                            if r.returncode == 0 and target.exists() and target.stat().st_size > 5000:
+                                captured = True
+                        except Exception:
+                            target.unlink(missing_ok=True)
+
+                    if not captured or not target.exists() or target.stat().st_size == 0:
+                        target.unlink(missing_ok=True)
+                        raise RuntimeError("Failed to capture live audio stream.")
+                    return target
+
+                try:
+                    output_file = await asyncio.to_thread(_capture_live_audio_sync)
+                except Exception as e:
+                    logger.error(f"Error during live audio cut: {e}", exc_info=True)
+                    raise HTTPException(status_code=502, detail=f"Failed to cut live audio: {str(e)[:160]}")
+
+            else:
+                q_limit = int(req.quality) if req.quality.isdigit() else 1080
+                v_fmts = [f for f in formats if f.get("vcodec") != "none" and f.get("height") and f["height"] <= q_limit and f.get("url")]
+                if not v_fmts:
+                    v_fmts = [f for f in formats if f.get("vcodec") != "none" and f.get("url")]
+                if not v_fmts:
+                    v_fmts = [f for f in formats if f.get("url")]
+
+                best_v = sorted(v_fmts, key=lambda x: x.get("height", 0), reverse=True)[0] if v_fmts else None
+                a_fmts = [f for f in formats if f.get("acodec") != "none" and f.get("url")]
+                best_a = a_fmts[-1] if a_fmts else None
+
+                if not best_v:
+                    raise HTTPException(status_code=400, detail="No video stream found for this live stream.")
+
+                def _capture_live_video_sync() -> Path:
+                    target = settings.UPLOADS_DIR / f"{safe_stem}.mp4"
+                    captured = False
+
+                    # 1. Seek with -ss if start_seek > 0
+                    if start_seek > 0:
+                        cmd = ["ffmpeg", "-y"]
+                        if best_a and best_v["url"] != best_a["url"]:
+                            cmd.extend(["-ss", str(start_seek), "-i", best_v["url"], "-ss", str(start_seek), "-i", best_a["url"]])
+                        else:
+                            cmd.extend(["-ss", str(start_seek), "-i", best_v["url"]])
+                        cmd.extend(["-t", str(duration_sec), "-c", "copy", "-bsf:a", "aac_adtstoasc", str(target)])
+                        try:
+                            r = subprocess.run(cmd, capture_output=True, timeout=max(60, duration_sec + 20))
+                            if r.returncode == 0 and target.exists() and target.stat().st_size > 10000:
+                                captured = True
+                            else:
+                                target.unlink(missing_ok=True)
+                        except Exception:
+                            target.unlink(missing_ok=True)
+
+                    # 2. Seek from DVR backwards (-sseof)
+                    if not captured:
+                        cmd = ["ffmpeg", "-y"]
+                        if best_a and best_v["url"] != best_a["url"]:
+                            cmd.extend(["-sseof", f"-{duration_sec}", "-i", best_v["url"], "-sseof", f"-{duration_sec}", "-i", best_a["url"]])
+                        else:
+                            cmd.extend(["-sseof", f"-{duration_sec}", "-i", best_v["url"]])
+                        cmd.extend(["-t", str(duration_sec), "-c", "copy", "-bsf:a", "aac_adtstoasc", str(target)])
+                        try:
+                            r = subprocess.run(cmd, capture_output=True, timeout=max(60, duration_sec + 20))
+                            if r.returncode == 0 and target.exists() and target.stat().st_size > 10000:
+                                captured = True
+                            else:
+                                target.unlink(missing_ok=True)
+                        except Exception:
+                            target.unlink(missing_ok=True)
+
+                    # 3. Live head
+                    if not captured:
+                        cmd = ["ffmpeg", "-y"]
+                        if best_a and best_v["url"] != best_a["url"]:
+                            cmd.extend(["-i", best_v["url"], "-i", best_a["url"]])
+                        else:
+                            cmd.extend(["-i", best_v["url"]])
+                        cmd.extend(["-t", str(duration_sec), "-c", "copy", "-bsf:a", "aac_adtstoasc", str(target)])
+                        try:
+                            r = subprocess.run(cmd, capture_output=True, timeout=max(60, duration_sec + 20))
+                            if r.returncode == 0 and target.exists() and target.stat().st_size > 10000:
+                                captured = True
+                        except Exception:
+                            target.unlink(missing_ok=True)
+
+                    # 4. Transcode fallback
+                    if not captured:
+                        cmd = ["ffmpeg", "-y"]
+                        if best_a and best_v["url"] != best_a["url"]:
+                            cmd.extend(["-i", best_v["url"], "-i", best_a["url"]])
+                        else:
+                            cmd.extend(["-i", best_v["url"]])
+                        cmd.extend(["-t", str(duration_sec), "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(target)])
+                        try:
+                            r = subprocess.run(cmd, capture_output=True, timeout=max(60, duration_sec + 20))
+                            if r.returncode == 0 and target.exists() and target.stat().st_size > 10000:
+                                captured = True
+                        except Exception:
+                            target.unlink(missing_ok=True)
+
+                    if not captured or not target.exists() or target.stat().st_size == 0:
+                        target.unlink(missing_ok=True)
+                        raise RuntimeError("Failed to capture live video stream.")
+                    return target
+
+                try:
+                    output_file = await asyncio.to_thread(_capture_live_video_sync)
+                except Exception as e:
+                    logger.error(f"Error during live video cut: {e}", exc_info=True)
+                    raise HTTPException(status_code=502, detail=f"Failed to cut live clip: {str(e)[:160]}")
+
+        else:
+            def _download_range_sync() -> Path:
+                out_tmpl = str(settings.UPLOADS_DIR / f"{safe_stem}.%(ext)s")
+
+                if is_audio:
+                    fmt = "bestaudio[ext=m4a]/bestaudio"
+                else:
+                    q = req.quality
+                    fmt = f"bestvideo[height<={q}][ext=mp4]+bestaudio[ext=m4a]/best[height<={q}][ext=mp4]/best[height<={q}]"
+
+                ydl_opts = {
+                    "format": fmt,
+                    "outtmpl": out_tmpl,
+                    "quiet": True,
+                    "no_warnings": True,
+                    "noplaylist": True,
+                    "force_keyframes_at_cuts": True,
+                    "download_ranges": download_range_func(None, [(req.start, req.end)]),
+                }
+                if not is_audio:
+                    ydl_opts["merge_output_format"] = "mp4"
+
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([url])
+                except Exception as err:
+                    # Clean up any partial files
+                    for f in settings.UPLOADS_DIR.glob(f"{safe_stem}*"):
+                        f.unlink(missing_ok=True)
+                    raise err
+
+                target = settings.UPLOADS_DIR / f"{safe_stem}.{ext}"
+                if target.exists() and target.stat().st_size > 0:
+                    return target
+
+                for cand in settings.UPLOADS_DIR.glob(f"{safe_stem}.*"):
+                    if cand.is_file() and cand.stat().st_size > 0:
+                        return cand
+
+                raise RuntimeError("Clipped file was not produced by downloader.")
 
             try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-            except Exception as err:
-                # Clean up any partial files
+                output_file = await asyncio.to_thread(_download_range_sync)
+            except Exception as e:
+                logger.error(f"Error during yt-dlp range cut: {e}", exc_info=True)
                 for f in settings.UPLOADS_DIR.glob(f"{safe_stem}*"):
                     f.unlink(missing_ok=True)
-                raise err
-
-            target = settings.UPLOADS_DIR / f"{safe_stem}.{ext}"
-            if target.exists() and target.stat().st_size > 0:
-                return target
-
-            for cand in settings.UPLOADS_DIR.glob(f"{safe_stem}.*"):
-                if cand.is_file() and cand.stat().st_size > 0:
-                    return cand
-
-            raise RuntimeError("Clipped file was not produced by downloader.")
-
-        try:
-            output_file = await asyncio.to_thread(_download_range_sync)
-        except Exception as e:
-            logger.error(f"Error during yt-dlp range cut: {e}", exc_info=True)
-            for f in settings.UPLOADS_DIR.glob(f"{safe_stem}*"):
-                f.unlink(missing_ok=True)
-            raise HTTPException(status_code=502, detail=f"Failed to cut clip: {str(e)[:160]}")
+                raise HTTPException(status_code=502, detail=f"Failed to cut clip: {str(e)[:160]}")
 
         # Probe the resulting clip with FFprobe
         if is_audio:
