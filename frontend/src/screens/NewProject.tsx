@@ -15,13 +15,17 @@ import {
   Smartphone, 
   Clock, 
   Trash2,
-  RefreshCw
+  RefreshCw,
+  Scissors,
+  RotateCcw,
+  Radio
 } from 'lucide-react';
 import { GlassCard } from '../components/GlassCard';
 import { CaptionStyleConfig, Project } from '../types';
 import { ScreenId } from '../components/Sidebar';
 import { CaptionStylePicker } from '../components/CaptionStylePicker';
 import { api } from '../services/api';
+import { secondsToHms, hmsToSeconds, clamp } from '../utils/time';
 
 export interface PreProcessingConfig {
   name: string;
@@ -46,6 +50,17 @@ export interface VideoInfo {
   size?: number;
   thumbnail_path?: string;
   is_url?: boolean;
+}
+
+export interface VideoDetails {
+  video_id: string;
+  title: string;
+  channel: string;
+  thumbnail: string;
+  duration: number;
+  is_live: boolean;
+  was_live: boolean;
+  available_heights: number[];
 }
 
 interface NewProjectProps {
@@ -82,6 +97,12 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
   const [isProcessingSource, setIsProcessingSource] = useState(false);
   const [sourceStatusText, setSourceStatusText] = useState('Analyzing media...');
   const [urlInput, setUrlInput] = useState('');
+  const [urlDetails, setUrlDetails] = useState<VideoDetails | null>(null);
+  const [isFetchingDetails, setIsFetchingDetails] = useState(false);
+  const [startTime, setStartTime] = useState<number>(0);
+  const [endTime, setEndTime] = useState<number>(600);
+  const [startText, setStartText] = useState<string>('00:00:00');
+  const [endText, setEndText] = useState<string>('00:10:00');
   const [liveMinutes, setLiveMinutes] = useState<number>(10);
   const [liveMode, setLiveMode] = useState<'last' | 'next'>('last');
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(initialVideoInfo || null);
@@ -171,42 +192,89 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
     }
   };
 
-  // Handle URL import via yt-dlp
-  const handleUrlSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Step 1: Fetch Video Details Only (NO download)
+  const handleFetchDetails = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!urlInput.trim()) return;
     setErrorMsg(null);
-    setIsProcessingSource(true);
-    setSourceStatusText('Downloading video & analyzing streams via yt-dlp...');
+    setIsFetchingDetails(true);
 
     try {
-      const res = await api.importVideoUrl(urlInput.trim(), liveMinutes, liveMode) as any;
-      const readyData: VideoInfo = {
-        video_path: res.video_path || res.path,
-        filename: res.filename || res.title || 'Imported Video',
-        duration: res.duration || 120,
-        width: res.width || 1920,
-        height: res.height || 1080,
-        fps: res.fps || 30,
-        thumbnail_path: res.thumbnail_path || res.thumbnail_url,
-        is_url: true,
-      };
+      const details = await api.getVideoInfo(urlInput.trim());
+      setUrlDetails(details);
 
-      setVideoInfo(readyData);
-
-      // Auto-fill project name from URL video title
+      // Auto-fill project name if not manually edited
       if (!nameUserEdited || !name.trim()) {
-        setName(readyData.filename);
+        setName(details.title || 'YouTube Clip Project');
       }
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to download video from URL. Make sure the link is public and accessible.');
+
+      // Configure default range selection
+      const maxDur = details.duration > 0 ? details.duration : 1800;
+      if (details.is_live) {
+        // Live stream default: last 10 minutes
+        const s = Math.max(0, maxDur - 600);
+        const e = maxDur;
+        setStartTime(s);
+        setEndTime(e);
+        setStartText(secondsToHms(s, true));
+        setEndText(secondsToHms(e, true));
+      } else {
+        // Normal video or replay default: first 10 minutes (or full duration if shorter)
+        const s = 0;
+        const e = Math.min(maxDur, 600);
+        setStartTime(s);
+        setEndTime(e);
+        setStartText(secondsToHms(s, true));
+        setEndText(secondsToHms(e, true));
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to fetch video details';
+      setErrorMsg(msg);
+      setUrlDetails(null);
     } finally {
-      setIsProcessingSource(false);
+      setIsFetchingDetails(false);
     }
+  };
+
+  const handleStartBlur = () => {
+    const parsed = hmsToSeconds(startText);
+    if (!isNaN(parsed) && parsed >= 0 && parsed < endTime) {
+      const clamped = clamp(parsed, 0, Math.max(0, endTime - 1));
+      setStartTime(clamped);
+      setStartText(secondsToHms(clamped, true));
+    } else {
+      setStartText(secondsToHms(startTime, true));
+    }
+  };
+
+  const handleEndBlur = () => {
+    const parsed = hmsToSeconds(endText);
+    const maxDur = urlDetails?.duration && urlDetails.duration > 0 ? urlDetails.duration : 1800;
+    if (!isNaN(parsed) && parsed > startTime && parsed <= maxDur) {
+      const clamped = clamp(parsed, startTime + 1, maxDur);
+      setEndTime(clamped);
+      setEndText(secondsToHms(clamped, true));
+    } else {
+      setEndText(secondsToHms(endTime, true));
+    }
+  };
+
+  const nudgeStart = (delta: number) => {
+    const newStart = clamp(startTime + delta, 0, Math.max(0, endTime - 1));
+    setStartTime(newStart);
+    setStartText(secondsToHms(newStart, true));
+  };
+
+  const nudgeEnd = (delta: number) => {
+    const maxDur = urlDetails?.duration && urlDetails.duration > 0 ? urlDetails.duration : 1800;
+    const newEnd = clamp(endTime + delta, startTime + 1, maxDur);
+    setEndTime(newEnd);
+    setEndText(secondsToHms(newEnd, true));
   };
 
   const handleRemoveVideo = () => {
     setVideoInfo(null);
+    setUrlDetails(null);
     setUrlInput('');
     setErrorMsg(null);
     if (fileInputRef.current) {
@@ -216,11 +284,48 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
 
   // Start Clipping handler (only ONE button at the bottom)
   const handleStartClipping = async () => {
-    if (!videoInfo || isSubmitting) return;
+    if (isSubmitting) return;
 
     setIsSubmitting(true);
+    setErrorMsg(null);
+
     try {
-      const projectName = name.trim() || videoInfo.filename.replace(/\.[^/.]+$/, '') || 'Untitled Project';
+      let targetVideoInfo = videoInfo;
+
+      // If URL source with fetched details (range selected):
+      if (!targetVideoInfo && urlDetails) {
+        setIsProcessingSource(true);
+        setSourceStatusText('Downloading selected video range via yt-dlp...');
+
+        const res = await api.importVideoUrl(
+          urlInput.trim(),
+          liveMinutes,
+          liveMode,
+          startTime,
+          endTime
+        );
+
+        targetVideoInfo = {
+          video_path: res.video_path || res.filename,
+          filename: res.filename || urlDetails.title,
+          duration: res.duration || (endTime - startTime),
+          width: res.width || 1920,
+          height: res.height || 1080,
+          fps: res.fps || 30,
+          thumbnail_path: res.thumbnail_path || urlDetails.thumbnail,
+          is_url: true,
+        };
+        setVideoInfo(targetVideoInfo);
+      }
+
+      if (!targetVideoInfo) {
+        setErrorMsg('Please select or upload a video first.');
+        setIsSubmitting(false);
+        setIsProcessingSource(false);
+        return;
+      }
+
+      const projectName = name.trim() || targetVideoInfo.filename.replace(/\.[^/.]+$/, '') || 'Untitled Project';
       const config: PreProcessingConfig = {
         name: projectName,
         aspectRatio,
@@ -234,10 +339,12 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
         smartZoom,
       };
 
-      await onLaunchProcessing(videoInfo, config);
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to start clipping project.');
+      await onLaunchProcessing(targetVideoInfo, config);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to start clipping project.';
+      setErrorMsg(msg);
       setIsSubmitting(false);
+      setIsProcessingSource(false);
     }
   };
 
@@ -357,108 +464,300 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
 
             {/* Tab: Import via URL */}
             {tab === 'url' && (
-              <form onSubmit={handleUrlSubmit} className="space-y-4 pt-2">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wide mb-2">
-                    Paste Online Video URL
-                  </label>
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <input
-                      type="url"
-                      placeholder="https://www.youtube.com/watch?v=..."
-                      value={urlInput}
-                      onChange={(e) => setUrlInput(e.target.value)}
-                      required
-                      className="flex-1 px-4 py-3 rounded-xl glass-input text-sm text-white placeholder-slate-500 focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                    />
-                    <button
-                      type="submit"
-                      disabled={isProcessingSource}
-                      className="px-6 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white text-xs font-bold transition-all disabled:opacity-50 flex items-center justify-center space-x-2 shrink-0"
-                    >
-                      {isProcessingSource ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Downloading Video...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4" />
-                          <span>Download & Import</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Livestream DVR Capture Window Options */}
-                <div className="p-3.5 rounded-2xl bg-purple-950/20 border border-purple-500/20 text-xs text-slate-300 space-y-2.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="flex items-center space-x-2 font-medium text-purple-200">
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
-                      </span>
-                      <span>Livestream DVR Capture:</span>
-                    </span>
-                    <div className="flex items-center space-x-1.5">
-                      <span className="text-[11px] text-slate-400 mr-1">Duration:</span>
-                      {[5, 10, 15, 20].map((mins) => (
+              <div className="space-y-4 pt-2">
+                {!urlDetails ? (
+                  <form onSubmit={handleFetchDetails} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wide mb-2">
+                        Paste YouTube Video URL
+                      </label>
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        <input
+                          type="url"
+                          placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/..."
+                          value={urlInput}
+                          onChange={(e) => setUrlInput(e.target.value)}
+                          required
+                          className="flex-1 px-4 py-3 rounded-xl glass-input text-sm text-white placeholder-slate-500 focus:ring-2 focus:ring-purple-500 focus:outline-none font-mono"
+                        />
                         <button
-                          key={mins}
-                          type="button"
-                          onClick={() => setLiveMinutes(mins)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
-                            liveMinutes === mins
-                              ? 'bg-purple-600 text-white shadow-[0_0_10px_rgba(168,85,247,0.3)]'
-                              : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
-                          }`}
+                          type="submit"
+                          disabled={isFetchingDetails || !urlInput.trim()}
+                          className="px-6 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white text-xs font-bold transition-all disabled:opacity-50 flex items-center justify-center space-x-2 shrink-0 cursor-pointer shadow-lg shadow-purple-600/20"
                         >
-                          {mins}m
+                          {isFetchingDetails ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>Fetching video details...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-4 h-4" />
+                              <span>Get Video</span>
+                            </>
+                          )}
                         </button>
-                      ))}
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-400 border-t border-white/[0.06] pt-2 gap-2">
-                    <span>If the link is an active livestream, capture instantly from DVR:</span>
-                    <div className="flex items-center space-x-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setLiveMode('last')}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${
-                          liveMode === 'last'
-                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/40'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        Past {liveMinutes}m (DVR)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setLiveMode('next')}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${
-                          liveMode === 'next'
-                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/40'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        Next {liveMinutes}m
-                      </button>
-                    </div>
-                  </div>
-                </div>
 
-                {isProcessingSource && (
-                  <p className="text-xs text-purple-300 flex items-center space-x-2 animate-pulse font-mono">
-                    <span>⏳</span>
-                    <span>{sourceStatusText}</span>
-                  </p>
+                    {isFetchingDetails && (
+                      <p className="text-xs text-purple-300 flex items-center space-x-2 animate-pulse font-mono">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Fetching video details (no download)...</span>
+                      </p>
+                    )}
+
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      * Enter any YouTube video, Short, or livestream link. Video details will be inspected instantly without downloading files.
+                    </p>
+                  </form>
+                ) : (
+                  /* Step 2: Details and Trim Card */
+                  <div className="rounded-2xl p-5 border border-purple-500/40 bg-purple-950/20 space-y-5 animate-fade-in">
+                    {/* Video Header / Metadata */}
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/[0.08] pb-4">
+                      <div className="flex items-center space-x-4 min-w-0">
+                        <div className="w-28 h-18 rounded-xl bg-black/80 border border-white/[0.1] overflow-hidden shrink-0 relative shadow-inner flex items-center justify-center">
+                          {urlDetails.thumbnail ? (
+                            <img
+                              src={urlDetails.thumbnail}
+                              alt={urlDetails.title}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <Film className="w-8 h-8 text-purple-400 opacity-80" />
+                          )}
+                          <span className="absolute bottom-1 right-1 text-[9px] bg-black/85 px-1.5 py-0.5 rounded text-white font-mono font-bold">
+                            {urlDetails.duration > 0 ? secondsToHms(urlDetails.duration) : 'LIVE'}
+                          </span>
+                        </div>
+
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex items-center gap-2">
+                            {urlDetails.is_live ? (
+                              <span className="px-2.5 py-0.5 rounded-full bg-red-500/20 border border-red-500/30 text-red-400 text-[10px] font-bold animate-pulse flex items-center gap-1.5 shrink-0">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                                LIVE
+                              </span>
+                            ) : urlDetails.was_live ? (
+                              <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[10px] font-bold shrink-0">
+                                Live replay
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-300 text-[10px] font-medium shrink-0">
+                                Video
+                              </span>
+                            )}
+                            <h3 className="text-sm font-bold text-white truncate max-w-md" title={urlDetails.title}>
+                              {urlDetails.title}
+                            </h3>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 font-mono">
+                            {urlDetails.channel && (
+                              <>
+                                <span className="text-slate-300">{urlDetails.channel}</span>
+                                <span>•</span>
+                              </>
+                            )}
+                            <span>Total Duration: {urlDetails.duration > 0 ? secondsToHms(urlDetails.duration) : 'Active Stream'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => { setUrlDetails(null); setErrorMsg(null); }}
+                        className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-slate-300 border border-white/[0.1] text-xs font-medium transition-colors shrink-0 cursor-pointer"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Change Video</span>
+                      </button>
+                    </div>
+
+                    {/* Which part do you want to clip? */}
+                    <div className="space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+                          <Scissors className="w-4 h-4 text-purple-400" />
+                          Which part do you want to clip?
+                        </h4>
+                        <div className="text-xs text-slate-300 font-mono bg-purple-950/40 px-3 py-1 rounded-lg border border-purple-500/20">
+                          Selected Length:{' '}
+                          <span className="text-purple-300 font-bold">
+                            {secondsToHms(Math.max(0, endTime - startTime))} ({Math.round(Math.max(0, endTime - startTime))}s)
+                          </span>
+                        </div>
+                      </div>
+
+                      {urlDetails.is_live && (
+                        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-xs flex items-center gap-2">
+                          <Radio className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                          <span>Live stream: you can clip only what has already been streamed.</span>
+                        </div>
+                      )}
+
+                      {/* Dual Range Slider Controls */}
+                      <div className="space-y-4 bg-black/40 p-4 rounded-xl border border-white/[0.06]">
+                        {(() => {
+                          const maxDuration = urlDetails.duration > 0 ? urlDetails.duration : 1800;
+                          return (
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-xs text-slate-400 font-mono">
+                                <span>{secondsToHms(startTime, true)}</span>
+                                <span className="text-purple-300 font-semibold">
+                                  {secondsToHms(Math.max(0, endTime - startTime))} selected
+                                </span>
+                                <span>{secondsToHms(maxDuration, true)}</span>
+                              </div>
+
+                              <div className="relative h-6 flex items-center">
+                                <div className="w-full h-2 rounded-full bg-slate-800" />
+                                <div
+                                  className="absolute h-2 rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 shadow-[0_0_12px_rgba(168,85,247,0.5)] pointer-events-none"
+                                  style={{
+                                    left: `${(startTime / maxDuration) * 100}%`,
+                                    width: `${Math.max(1, ((endTime - startTime) / maxDuration) * 100)}%`,
+                                  }}
+                                />
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={maxDuration}
+                                  step={1}
+                                  value={startTime}
+                                  onChange={(e) => {
+                                    const val = clamp(parseFloat(e.target.value), 0, Math.max(0, endTime - 1));
+                                    setStartTime(val);
+                                    setStartText(secondsToHms(val, true));
+                                  }}
+                                  className="absolute w-full accent-purple-400 cursor-pointer pointer-events-auto opacity-75 hover:opacity-100"
+                                />
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={maxDuration}
+                                  step={1}
+                                  value={endTime}
+                                  onChange={(e) => {
+                                    const val = clamp(parseFloat(e.target.value), startTime + 1, maxDuration);
+                                    setEndTime(val);
+                                    setEndText(secondsToHms(val, true));
+                                  }}
+                                  className="absolute w-full accent-indigo-400 cursor-pointer pointer-events-auto opacity-75 hover:opacity-100"
+                                />
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Start and End Boxes with Nudge Buttons */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                          {/* Start Time Box */}
+                          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-2">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+                                Start Time (HH:MM:SS)
+                              </label>
+                              <span className="text-[10px] text-slate-500 font-mono">Sec: {Math.round(startTime)}s</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={startText}
+                                onChange={(e) => setStartText(e.target.value)}
+                                onBlur={handleStartBlur}
+                                placeholder="00:00:00"
+                                className="w-24 px-2.5 py-1.5 bg-black/60 border border-white/[0.12] rounded-lg text-xs font-mono text-center text-white focus:outline-none focus:border-purple-500"
+                              />
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => nudgeStart(-5)}
+                                  className="px-2 py-1 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-slate-300 rounded text-[11px] font-mono transition-all"
+                                >
+                                  -5s
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => nudgeStart(-1)}
+                                  className="px-2 py-1 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-slate-300 rounded text-[11px] font-mono transition-all"
+                                >
+                                  -1s
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => nudgeStart(1)}
+                                  className="px-2 py-1 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-slate-300 rounded text-[11px] font-mono transition-all"
+                                >
+                                  +1s
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => nudgeStart(5)}
+                                  className="px-2 py-1 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-slate-300 rounded text-[11px] font-mono transition-all"
+                                >
+                                  +5s
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* End Time Box */}
+                          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-2">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+                                End Time (HH:MM:SS)
+                              </label>
+                              <span className="text-[10px] text-slate-500 font-mono">Sec: {Math.round(endTime)}s</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={endText}
+                                onChange={(e) => setEndText(e.target.value)}
+                                onBlur={handleEndBlur}
+                                placeholder="00:10:00"
+                                className="w-24 px-2.5 py-1.5 bg-black/60 border border-white/[0.12] rounded-lg text-xs font-mono text-center text-white focus:outline-none focus:border-purple-500"
+                              />
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => nudgeEnd(-5)}
+                                  className="px-2 py-1 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-slate-300 rounded text-[11px] font-mono transition-all"
+                                >
+                                  -5s
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => nudgeEnd(-1)}
+                                  className="px-2 py-1 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-slate-300 rounded text-[11px] font-mono transition-all"
+                                >
+                                  -1s
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => nudgeEnd(1)}
+                                  className="px-2 py-1 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-slate-300 rounded text-[11px] font-mono transition-all"
+                                >
+                                  +1s
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => nudgeEnd(5)}
+                                  className="px-2 py-1 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-slate-300 rounded text-[11px] font-mono transition-all"
+                                >
+                                  +5s
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 )}
-
-                <p className="text-[11px] text-slate-500 leading-relaxed">
-                  * Supports YouTube, Twitter/X, Twitch, and web MP4 streams. Video is downloaded locally into your storage folder for offline AI slicing.
-                </p>
-              </form>
+              </div>
             )}
           </div>
         ) : (
@@ -708,9 +1007,9 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
         <button
           type="button"
           onClick={handleStartClipping}
-          disabled={!videoInfo || isSubmitting}
+          disabled={(!videoInfo && !urlDetails) || isSubmitting}
           className={`px-8 py-4 rounded-2xl font-bold text-sm flex items-center space-x-2.5 transition-all shadow-xl ${
-            !videoInfo || isSubmitting
+            (!videoInfo && !urlDetails) || isSubmitting
               ? 'bg-slate-800/80 text-slate-500 cursor-not-allowed border border-white/[0.05]'
               : 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-500 hover:from-purple-500 hover:to-indigo-500 text-white shadow-[0_0_25px_rgba(139,92,246,0.4)] hover:scale-[1.02] active:scale-[0.98]'
           }`}
@@ -718,7 +1017,7 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
           {isSubmitting ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
-              <span>Starting Pipeline...</span>
+              <span>{sourceStatusText || 'Starting Pipeline...'}</span>
             </>
           ) : (
             <>
@@ -730,10 +1029,10 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
         </button>
 
         {/* Disabled Reason / Explanation */}
-        {!videoInfo && (
+        {!videoInfo && !urlDetails && (
           <p className="text-xs text-amber-400/90 flex items-center space-x-1.5 font-medium">
             <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-            <span>Select or upload a source video above to start clipping</span>
+            <span>Select or paste a source video above to start clipping</span>
           </p>
         )}
       </div>

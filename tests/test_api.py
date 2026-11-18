@@ -59,6 +59,15 @@ def test_project_crud():
     res_del = client.delete(f"/api/projects/{proj_id}")
     assert res_del.status_code == 200
 
+def test_videos_info_ssrf_and_host_validation():
+    # SSRF rejected
+    res = client.post("/api/videos/info", json={"url": "http://127.0.0.1:8000/api"})
+    assert res.status_code == 400
+
+    # Non-YouTube host rejected
+    res_vimeo = client.post("/api/videos/info", json={"url": "https://vimeo.com/123456"})
+    assert res_vimeo.status_code == 400
+
 def test_automation_settings():
     res = client.get("/api/automation/settings")
     assert res.status_code == 200
@@ -72,5 +81,6 @@ if __name__ == "__main__":
     test_caption_presets()
     test_providers_list()
     test_project_crud()
+    test_videos_info_ssrf_and_host_validation()
     test_automation_settings()
     print("ALL API TESTS PASSED SUCCESSFULLY!")

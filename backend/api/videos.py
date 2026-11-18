@@ -1,6 +1,8 @@
+import asyncio
 from pathlib import Path
 import subprocess
-from typing import Optional
+from typing import Optional, List
+from urllib.parse import urlparse
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from backend.config import settings
@@ -10,10 +12,87 @@ from backend.core.logger import logger
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
+ALLOWED_YOUTUBE_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "youtu.be",
+    "music.youtube.com",
+}
+
+class VideoInfoRequest(BaseModel):
+    url: str
+
 class URLImportRequest(BaseModel):
     url: str
     live_clip_minutes: Optional[int] = 10
     live_mode: Optional[str] = "last"
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+
+@router.post("/info")
+async def get_video_info(req: VideoInfoRequest):
+    url = validate_public_url(req.url.strip())
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host not in ALLOWED_YOUTUBE_HOSTS:
+        raise HTTPException(
+            status_code=400,
+            detail="Only YouTube links (youtube.com, youtu.be, music.youtube.com) are supported."
+        )
+
+    def _extract_sync():
+        import yt_dlp
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "skip_download": True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            return ydl.extract_info(url, download=False)
+
+    try:
+        from yt_dlp.utils import DownloadError
+        info = await asyncio.to_thread(_extract_sync)
+    except DownloadError as e:
+        err_msg = str(e).lower()
+        logger.error(f"yt-dlp extract error for {url}: {e}", exc_info=True)
+        if any(keyword in err_msg for keyword in ("private video", "video unavailable", "not found", "404")):
+            raise HTTPException(status_code=404, detail="This YouTube video is private or unavailable.")
+        if any(keyword in err_msg for keyword in ("sign in", "bot", "captcha", "confirm you're not a robot")):
+            raise HTTPException(status_code=403, detail="YouTube requires sign-in or verification to access this video.")
+        raise HTTPException(status_code=502, detail="Could not retrieve video information from YouTube.")
+    except Exception as e:
+        logger.error(f"Unexpected error extracting video info: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="Failed to inspect YouTube video.")
+
+    video_id = info.get("id") or ""
+    title = info.get("title") or "Untitled Video"
+    channel = info.get("uploader") or info.get("channel") or ""
+    thumbnail = info.get("thumbnail") or ""
+    duration = int(info.get("duration") or 0)
+    is_live = bool(info.get("is_live") or info.get("live_status") == "is_live")
+    was_live = bool(info.get("was_live") or info.get("live_status") == "was_live")
+
+    formats = info.get("formats") or []
+    heights = set()
+    for f in formats:
+        h = f.get("height")
+        if h and isinstance(h, int) and h > 0:
+            heights.add(h)
+    available_heights = sorted(list(heights))
+
+    return {
+        "video_id": video_id,
+        "title": title,
+        "channel": channel,
+        "thumbnail": thumbnail,
+        "duration": duration,
+        "is_live": is_live,
+        "was_live": was_live,
+        "available_heights": available_heights,
+    }
 
 @router.post("/upload")
 async def upload_video(file: UploadFile = File(...)):
@@ -87,7 +166,46 @@ async def import_url(req: URLImportRequest):
 
         is_live = bool(info.get('is_live') or info.get('live_status') == 'is_live')
 
-        if is_live:
+        # If explicit trim range was requested (start_time & end_time)
+        if req.start_time is not None and req.end_time is not None:
+            start_time = max(0.0, float(req.start_time))
+            end_time = float(req.end_time)
+            if end_time <= start_time:
+                raise HTTPException(status_code=400, detail="End time must be greater than start time.")
+
+            from yt_dlp.utils import download_range_func
+            clean_title = "".join(c for c in (info.get("title") or "video") if c.isalnum() or c in (" ", "-", "_")).strip()[:40] or "video"
+            video_id = info.get("id", "yt")
+            safe_name = unique_filename(f"{clean_title}-{video_id}_{int(start_time)}_{int(end_time)}.mp4")
+            outtmpl = str(settings.UPLOADS_DIR / f"{Path(safe_name).stem}.%(ext)s")
+
+            ydl_opts = {
+                'format': 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'outtmpl': outtmpl,
+                'quiet': True,
+                'no_warnings': True,
+                'noplaylist': True,
+                'force_keyframes_at_cuts': True,
+                'download_ranges': download_range_func(None, [(start_time, end_time)]),
+                'merge_output_format': 'mp4',
+            }
+            if is_live:
+                ydl_opts['live_from_start'] = True
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            p = settings.UPLOADS_DIR / f"{Path(safe_name).stem}.mp4"
+            if not p.exists():
+                candidates = list(settings.UPLOADS_DIR.glob(f"{Path(safe_name).stem}.*"))
+                for cand in candidates:
+                    if cand.is_file() and cand.stat().st_size > 0:
+                        p = cand
+                        break
+
+            if not p.exists() or p.stat().st_size == 0:
+                raise HTTPException(status_code=500, detail="Failed to download trimmed video segment.")
+        elif is_live:
             logger.info(f"Active livestream detected for {url}. Capturing live window...")
             duration_sec = max(30, min(int(req.live_clip_minutes or 10) * 60, 3600))
 

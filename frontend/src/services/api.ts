@@ -85,11 +85,47 @@ export const api = {
     });
   },
 
+  async getVideoInfo(url: string): Promise<{
+    video_id: string;
+    title: string;
+    channel: string;
+    thumbnail: string;
+    duration: number;
+    is_live: boolean;
+    was_live: boolean;
+    available_heights: number[];
+  }> {
+    const res = await fetch(`${API_BASE}/videos/info`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to fetch video details' }));
+      throw new Error(err.detail || 'Failed to fetch video details');
+    }
+    return res.json();
+  },
+
   async importVideoUrl(
     url: string,
     liveClipMinutes: number = 10,
-    liveMode: string = 'last'
-  ): Promise<{ title: string; duration: number; thumbnail_url: string; thumbnail_path?: string; video_path: string; is_live?: boolean; metadata?: any }> {
+    liveMode: string = 'last',
+    startTime?: number,
+    endTime?: number
+  ): Promise<{
+    title: string;
+    filename: string;
+    duration: number;
+    thumbnail_url?: string;
+    thumbnail_path?: string;
+    video_path: string;
+    width?: number;
+    height?: number;
+    fps?: number;
+    is_live?: boolean;
+    metadata?: any;
+  }> {
     const res = await fetch(`${API_BASE}/videos/import-url`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -97,11 +133,13 @@ export const api = {
         url,
         live_clip_minutes: liveClipMinutes,
         live_mode: liveMode,
+        start_time: startTime,
+        end_time: endTime,
       }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Failed to inspect URL' }));
-      throw new Error(err.detail || 'Failed to inspect URL');
+      const err = await res.json().catch(() => ({ detail: 'Failed to download video range' }));
+      throw new Error(err.detail || 'Failed to download video range');
     }
     return res.json();
   },
