@@ -12,6 +12,32 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 VALID_PROFILES = {"ECO", "BALANCED", "QUALITY"}
 VALID_WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v2", "large-v3"}
 
+def _persist_env_settings(updates: Dict[str, str]):
+    env_path = settings.ROOT_DIR / ".env"
+    if not env_path.exists():
+        return
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+        new_lines = []
+        handled_keys = set()
+        for line in lines:
+            line_strip = line.strip()
+            matched = False
+            for k, v in updates.items():
+                if line_strip.startswith(f"{k}="):
+                    new_lines.append(f"{k}={v}")
+                    handled_keys.add(k)
+                    matched = True
+                    break
+            if not matched:
+                new_lines.append(line)
+        for k, v in updates.items():
+            if k not in handled_keys:
+                new_lines.append(f"{k}={v}")
+        env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Could not persist system settings to .env: {e}")
+
 @router.get("/settings", response_model=Dict[str, Any])
 async def get_system_settings():
     hw = hardware_monitor.get_hardware_info()
@@ -39,6 +65,7 @@ async def update_system_settings(data: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=f"profile must be one of {sorted(VALID_PROFILES)}")
     if "whisper_model" in hw and hw["whisper_model"] not in VALID_WHISPER_MODELS:
         raise HTTPException(status_code=400, detail=f"whisper_model must be one of {sorted(VALID_WHISPER_MODELS)}")
+    env_updates = {}
     if "ffmpeg_threads" in hw:
         try:
             threads = int(hw["ffmpeg_threads"])
@@ -47,12 +74,20 @@ async def update_system_settings(data: Dict[str, Any]):
         if not 1 <= threads <= 64:
             raise HTTPException(status_code=400, detail="ffmpeg_threads must be between 1 and 64")
         settings.FFMPEG_THREADS = threads
+        env_updates["FFMPEG_THREADS"] = str(threads)
     if "profile" in hw:
         settings.HARDWARE_PROFILE = hw["profile"]
+        env_updates["HARDWARE_PROFILE"] = str(hw["profile"])
     if "whisper_model" in hw:
         settings.DEFAULT_WHISPER_MODEL = hw["whisper_model"]
+        env_updates["DEFAULT_WHISPER_MODEL"] = str(hw["whisper_model"])
     if "enable_gpu" in hw:
         settings.ENABLE_GPU_ACCELERATION = bool(hw["enable_gpu"])
+        env_updates["ENABLE_GPU_ACCELERATION"] = "true" if hw["enable_gpu"] else "false"
+
+    if env_updates:
+        _persist_env_settings(env_updates)
+
     logger.info(f"Updated system settings: Hardware Profile={settings.HARDWARE_PROFILE}, Threads={settings.FFMPEG_THREADS}")
     return {"success": True}
 

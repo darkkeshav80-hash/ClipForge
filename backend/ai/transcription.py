@@ -110,6 +110,7 @@ class Transcriber:
         try:
             with wave.open(str(audio_path), "rb") as w:
                 sample_rate = w.getframerate()
+                n_channels = w.getnchannels()
                 n_frames = w.getnframes()
                 total_duration = n_frames / float(sample_rate)
                 n_chunks = max(int(np.ceil(total_duration / CHUNK_SECONDS)), 1)
@@ -125,6 +126,8 @@ class Transcriber:
                         break
 
                     audio_chunk = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+                    if n_channels > 1:
+                        audio_chunk = audio_chunk.reshape(-1, n_channels).mean(axis=1)
 
                     if len(audio_chunk) > sample_rate * 0.5:
                         segments, info = model.transcribe(

@@ -42,14 +42,14 @@ class ClaudeProvider(BaseAIProvider):
             return data["content"][0]["text"]
 
     async def list_models(self) -> List[str]:
-        return ["claude-3-7-sonnet", "claude-3-5-sonnet", "claude-3-5-haiku"]
+        return ["claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022", "claude-3-7-sonnet-20250219"]
 
     async def test_connection(self) -> Dict[str, Any]:
         if not self.api_key:
             return {"success": False, "message": "API key is missing"}
         try:
-            # Quick check with haiku
-            await self.complete(prompt="Hi", model="claude-3-5-haiku", max_tokens=5)
+            # Quick check with haiku default model
+            await self.complete(prompt="Hi", model=self.default_model, max_tokens=5)
             return {"success": True, "models": await self.list_models(), "message": "Anthropic Claude connection verified!"}
         except Exception as e:
             return {"success": False, "message": str(e)}

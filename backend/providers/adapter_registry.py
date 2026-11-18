@@ -31,9 +31,9 @@ class ProviderRegistry:
         if p_type == "openai":
             return OpenAIProvider(api_key, base_url or "https://api.openai.com/v1", sel_model or "gpt-4o-mini")
         elif p_type == "gemini":
-            return GeminiProvider(api_key, base_url, sel_model or "gemini-3.5-flash")
+            return GeminiProvider(api_key, base_url, sel_model or "gemini-2.0-flash")
         elif p_type == "anthropic":
-            return ClaudeProvider(api_key, base_url, sel_model or "claude-3-5-haiku")
+            return ClaudeProvider(api_key, base_url, sel_model or "claude-3-5-haiku-20241022")
         elif p_type == "groq":
             return GroqProvider(api_key, base_url, sel_model or "llama-3.3-70b-versatile")
         elif p_type == "ollama":

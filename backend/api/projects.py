@@ -1,9 +1,11 @@
 import json
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from typing import List, Dict, Any
 from datetime import datetime
 from backend.core.db import db
 from backend.core.logger import logger
+from backend.config import settings
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -114,6 +116,30 @@ async def update_project(project_id: str, data: Dict[str, Any]):
 @router.delete("/{project_id}")
 async def delete_project(project_id: str):
     async with db.get_connection() as conn:
+        # 1. Clean up associated clip media files on disk
+        cursor = await conn.execute(
+            "SELECT id, rendered_path, thumbnail_path FROM clips WHERE project_id = ?",
+            (project_id,)
+        )
+        clip_rows = await cursor.fetchall()
+        for c in clip_rows:
+            if c["rendered_path"]:
+                (settings.STORAGE_DIR / c["rendered_path"]).unlink(missing_ok=True)
+            if c["thumbnail_path"]:
+                (settings.STORAGE_DIR / c["thumbnail_path"]).unlink(missing_ok=True)
+            ass_file = settings.CAPTIONS_DIR / f"{c['id']}.ass"
+            ass_file.unlink(missing_ok=True)
+            safe_ass = settings.CAPTIONS_DIR / f"{c['id']}_safe.ass"
+            safe_ass.unlink(missing_ok=True)
+
+        # 2. Clean up project thumbnail & temp audio if present
+        p_cur = await conn.execute("SELECT thumbnail_path FROM projects WHERE id = ?", (project_id,))
+        p_row = await p_cur.fetchone()
+        if p_row and p_row["thumbnail_path"]:
+            (settings.STORAGE_DIR / p_row["thumbnail_path"]).unlink(missing_ok=True)
+        (settings.TEMP_DIR / f"{project_id}_audio.wav").unlink(missing_ok=True)
+
+        # 3. Delete database record (cascades to clips)
         await conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         await conn.commit()
     return {"success": True, "message": f"Project {project_id} deleted."}

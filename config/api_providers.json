@@ -17,8 +17,8 @@
     "enabled": false,
     "api_key": "",
     "base_url": "",
-    "models": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
-    "selected_model": "gemini-2.5-flash",
+    "models": ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
+    "selected_model": "gemini-2.0-flash",
     "status": "disconnected"
   },
   {
@@ -28,8 +28,8 @@
     "enabled": false,
     "api_key": "",
     "base_url": "https://api.anthropic.com/v1",
-    "models": ["claude-3-7-sonnet", "claude-3-5-haiku", "claude-3-5-sonnet"],
-    "selected_model": "claude-3-5-haiku",
+    "models": ["claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022", "claude-3-7-sonnet-20250219"],
+    "selected_model": "claude-3-5-haiku-20241022",
     "status": "disconnected"
   },
   {

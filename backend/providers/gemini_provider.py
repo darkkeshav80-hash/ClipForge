@@ -14,7 +14,7 @@ class GeminiProvider(BaseAIProvider):
     - Exponential backoff retry on HTTP 429 / 503
     - 180s timeout, maxOutputTokens=8192, temperature <= 0.3 for JSON
     """
-    def __init__(self, api_key: str = "", base_url: str = "", default_model: str = "gemini-3.5-flash"):
+    def __init__(self, api_key: str = "", base_url: str = "", default_model: str = "gemini-2.0-flash"):
         super().__init__(api_key, base_url, default_model)
 
     async def complete(
@@ -101,7 +101,7 @@ class GeminiProvider(BaseAIProvider):
 
     async def list_models(self) -> List[str]:
         if not self.api_key:
-            return ["gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]
+            return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
         try:
             url = "https://generativelanguage.googleapis.com/v1beta/models"
             headers = {"x-goog-api-key": self.api_key}
@@ -114,10 +114,10 @@ class GeminiProvider(BaseAIProvider):
                         for m in data.get("models", [])
                         if "gemini" in m.get("name", "") and "generateContent" in m.get("supportedGenerationMethods", [])
                     ]
-                    return models if models else ["gemini-3.5-flash", "gemini-2.5-pro"]
+                    return models if models else ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
         except Exception as e:
             logger.warning(f"Failed to list Gemini models: {e}")
-        return ["gemini-3.5-flash", "gemini-2.5-pro"]
+        return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
 
     async def test_connection(self) -> Dict[str, Any]:
         if not self.api_key:
