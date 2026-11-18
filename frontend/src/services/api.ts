@@ -7,7 +7,10 @@ import {
   AutomationSettings, 
   HardwareProfileConfig,
   YouTubeStudioStatus,
-  DashboardMetrics 
+  DashboardMetrics,
+  ClipInfo,
+  ClipCutRequest,
+  ClipCutResult
 } from '../types';
 
 const API_BASE = '/api';
@@ -285,5 +288,36 @@ export const api = {
     });
     if (!res.ok) throw new Error('Storage cleanup failed');
     return res.json();
+  },
+
+  // Clip Cutter
+  async getClipInfo(url: string): Promise<ClipInfo> {
+    const res = await fetch(`${API_BASE}/clipcutter/info`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to inspect YouTube URL' }));
+      throw new Error(err.detail || 'Failed to inspect YouTube URL');
+    }
+    return res.json();
+  },
+
+  async createClip(req: ClipCutRequest): Promise<ClipCutResult> {
+    const res = await fetch(`${API_BASE}/clipcutter/clip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Clip cutting failed' }));
+      throw new Error(err.detail || 'Clip cutting failed');
+    }
+    return res.json();
+  },
+
+  getClipDownloadUrl(filename: string): string {
+    return `${API_BASE}/clipcutter/file/${encodeURIComponent(filename)}`;
   }
 };

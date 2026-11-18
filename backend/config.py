@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     # Host header allow-list (blocks DNS-rebinding). Add your LAN name/IP here if you set HOST=0.0.0.0
     ALLOWED_HOSTS: List[str] = ["localhost", "127.0.0.1", "testserver"]
     MAX_UPLOAD_MB: int = 4096
+    MAX_CLIP_SECONDS: int = 600
 
     # Hardware Tuning
     HARDWARE_PROFILE: str = "BALANCED" # ECO | BALANCED | QUALITY

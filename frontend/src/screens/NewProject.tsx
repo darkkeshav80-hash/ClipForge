@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   PlusCircle, 
   Sparkles, 
@@ -52,6 +52,7 @@ interface NewProjectProps {
   presets: CaptionStyleConfig[];
   onLaunchProcessing: (videoData: any, config: PreProcessingConfig) => Promise<void> | void;
   onNavigate: (screen: ScreenId) => void;
+  initialVideoInfo?: VideoInfo | null;
 }
 
 function formatFileSize(bytes?: number): string {
@@ -72,6 +73,7 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
   presets,
   onLaunchProcessing,
   onNavigate,
+  initialVideoInfo,
 }) => {
   // Source Video States
   const [tab, setTab] = useState<'upload' | 'url'>('upload');
@@ -82,9 +84,20 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
   const [urlInput, setUrlInput] = useState('');
   const [liveMinutes, setLiveMinutes] = useState<number>(10);
   const [liveMode, setLiveMode] = useState<'last' | 'next'>('last');
-  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
+  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(initialVideoInfo || null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync initialVideoInfo if passed externally (e.g. from Clip Cutter)
+  useEffect(() => {
+    if (initialVideoInfo) {
+      setVideoInfo(initialVideoInfo);
+      if (!nameUserEdited || !name.trim()) {
+        const cleanName = initialVideoInfo.filename.replace(/\.[^/.]+$/, '').trim();
+        setName(cleanName || 'Untitled Project');
+      }
+    }
+  }, [initialVideoInfo]);
 
   // Pipeline Settings States
   const [name, setName] = useState('');

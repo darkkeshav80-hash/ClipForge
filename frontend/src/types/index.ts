@@ -222,3 +222,36 @@ export interface DashboardMetrics {
   ai_status: 'online' | 'degraded' | 'offline';
   hardware_profile: 'ECO' | 'BALANCED' | 'QUALITY';
 }
+
+export type ClipCutQuality = '1080' | '720' | '480' | '360' | '240' | '144' | 'audio';
+
+export interface ClipInfo {
+  video_id: string;
+  title: string;
+  channel: string;
+  thumbnail: string;
+  duration: number;
+  is_live: boolean;
+  was_live: boolean;
+  available_heights: number[];
+  has_audio_only: boolean;
+  note?: string;
+}
+
+export interface ClipCutRequest {
+  url: string;
+  start: number;
+  end: number;
+  quality: ClipCutQuality;
+}
+
+export interface ClipCutResult {
+  path: string;
+  filename: string;
+  duration: number;
+  width: number;
+  height: number;
+  fps: number;
+  thumbnail_path?: string;
+  download_url: string;
+}

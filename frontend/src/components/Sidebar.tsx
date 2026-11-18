@@ -11,11 +11,13 @@ import {
   Cpu, 
   Settings,
   Flame,
-  CheckCircle2
+  CheckCircle2,
+  Scissors
 } from 'lucide-react';
 
 export type ScreenId = 
   | 'dashboard'
+  | 'clip-cutter'
   | 'new-project'
   | 'processing'
   | 'clips-gallery'
@@ -58,6 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       title: 'FACTORY WORKFLOW',
       items: [
         { id: 'dashboard' as ScreenId, label: 'Overview', icon: LayoutDashboard },
+        { id: 'clip-cutter' as ScreenId, label: 'Clip Cutter', icon: Scissors, badge: 'Free' },
         { id: 'new-project' as ScreenId, label: 'New Project', icon: PlusCircle, badge: 'New' },
         { id: 'processing' as ScreenId, label: 'Processing Queue', icon: Layers, count: queueCount },
         { id: 'clips-gallery' as ScreenId, label: 'Generated Clips', icon: Film, count: clipsCount },

@@ -23,6 +23,7 @@ from backend.api.youtube import router as youtube_router
 from backend.api.analytics import router as analytics_router
 from backend.api.system import router as system_router
 from backend.api.websocket import router as websocket_router
+from backend.api.clipcutter import router as clipcutter_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -98,6 +99,7 @@ app.include_router(youtube_router)
 app.include_router(analytics_router)
 app.include_router(system_router)
 app.include_router(websocket_router)
+app.include_router(clipcutter_router)
 
 # Serve ONLY the public media folders. The storage root also holds the SQLite database
 # (which contains API keys), uploads and temp files, and must never be exposed.

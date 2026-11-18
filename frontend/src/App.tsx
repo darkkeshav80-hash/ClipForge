@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { Sidebar, ScreenId } from './components/Sidebar';
 import { DashboardScreen } from './screens/Dashboard';
-import { NewProjectScreen } from './screens/NewProject';
+import { NewProjectScreen, VideoInfo } from './screens/NewProject';
+import { ClipCutterScreen } from './screens/ClipCutter';
 import { AIProcessingScreen } from './screens/AIProcessing';
 import { GeneratedClipsGalleryScreen } from './screens/GeneratedClipsGallery';
 import { AIModelManagerScreen } from './screens/AIModelManager';
@@ -23,7 +24,8 @@ import {
   YouTubeStudioStatus, 
   DashboardMetrics, 
   ProcessingLog, 
-  PipelineStage 
+  PipelineStage,
+  ClipCutResult 
 } from './types';
 import { api } from './services/api';
 import { wsClient } from './services/websocket';
@@ -51,6 +53,7 @@ export const App: React.FC = () => {
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [clips, setClips] = useState<Clip[]>([]);
+  const [prefilledVideoInfo, setPrefilledVideoInfo] = useState<VideoInfo | null>(null);
 
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [currentClip, setCurrentClip] = useState<Clip | null>(null);
@@ -348,6 +351,20 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleUseClipInProject = (clipResult: ClipCutResult) => {
+    setPrefilledVideoInfo({
+      video_path: clipResult.path,
+      filename: clipResult.filename,
+      duration: clipResult.duration,
+      width: clipResult.width,
+      height: clipResult.height,
+      fps: clipResult.fps,
+      thumbnail_path: clipResult.thumbnail_path,
+      is_url: false,
+    });
+    setActiveScreen('new-project');
+  };
+
   return (
     <div className={`min-h-screen bg-[#080B14] text-slate-100 flex flex-col ${isLowPerf ? 'low-perf' : ''}`}>
       {/* Top Glass Navbar */}
@@ -383,11 +400,18 @@ export const App: React.FC = () => {
             />
           )}
 
+          {activeScreen === 'clip-cutter' && (
+            <ClipCutterScreen
+              onUseInProject={handleUseClipInProject}
+            />
+          )}
+
           {activeScreen === 'new-project' && (
             <NewProjectScreen
               presets={presets}
               onLaunchProcessing={handleLaunchProcessing}
               onNavigate={(s) => setActiveScreen(s)}
+              initialVideoInfo={prefilledVideoInfo}
             />
           )}
 

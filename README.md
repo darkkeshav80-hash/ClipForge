@@ -18,6 +18,20 @@
 - **Clean Export Guarantee:** Captions only — zero burned-in title cards, watermarks, or topic overlays on output video files.
 - **Modular AI Model Routing:** Connect **Google Gemini**, **OpenAI**, **Anthropic Claude**, **DeepSeek**, **Groq**, **Together AI**, or run **100% Free Local Ollama** (Llama 3.2, Mistral). Also includes full offline heuristic fallback.
 - **Automated YouTube Studio Publishing:** Connect via Google OAuth to generate SEO titles, descriptions, hashtags, and schedule or auto-publish approved Shorts.
+- **Clip Cutter (100% Free Trimmer):** Frame-accurate YouTube video and livestream segment extractor with zero API keys or service costs.
+
+---
+
+## ✂️ Clip Cutter (100% Free YouTube Trimmer)
+
+Extract frame-accurate clips directly from any YouTube video, Short, or livestream without paid APIs or downloading full videos first:
+
+- **Universal YouTube Support:** Works with standard videos, Shorts, finished live stream replays, and active livestreams with DVR.
+- **Embedded Player & Interactive Range Trimmer:** Scrub directly in an embedded player, preview the selection (`Play Selection`), or click *Set to Current Player Time*.
+- **Fine-Tuning Controls:** Numeric timestamp entry (`HH:MM:SS`), step nudge buttons (`±1s`, `±5s`), and quick duration buttons (`+15s`, `+30s`, `+60s`, `+90s`, `+3m`, `+5m`).
+- **Flexible Quality & Audio-Only:** Download in 1080p, 720p, 480p, 360p, 240p, 144p MP4, or extract pure audio as M4A.
+- **Seamless Pipeline Integration:** One-click *"Use in New Project"* button loads the cut clip straight into ClipForge's 9:16 vertical crop, caption, and viral shorts generator.
+- **100% Free:** Uses only `yt-dlp` and `FFmpeg` on your machine, plus the free YouTube IFrame Player API. No API tokens or costs required.
 
 ---
 
@@ -96,7 +110,7 @@ ClipForge AI includes 36 customizable subtitle animation styles:
 clipforge-ai/
 ├── backend/                   # FastAPI + SQLite + Faster-Whisper + FFmpeg Engine
 │   ├── ai/                    # Transcription, Viral Analyzer, Editing Brain, Reviewer
-│   ├── api/                   # REST API routers (projects, clips, automation, captions)
+│   ├── api/                   # REST API routers (projects, clips, clipcutter, automation, captions)
 │   ├── captions/              # ASS subtitle generator with karaoke word tags
 │   ├── core/                  # Database manager, security vault, hardware tuner
 │   ├── providers/             # Gemini, OpenAI, Claude, Groq, Ollama adapters
