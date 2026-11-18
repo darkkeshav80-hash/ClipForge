@@ -277,11 +277,11 @@ export const App: React.FC = () => {
   const handleLaunchProcessing = async (videoData: any, config?: any) => {
     try {
       const projId = currentProject?.id || `proj-${Date.now()}`;
+      let minD = config?.minDuration ?? 15;
+      let maxD = config?.maxDuration ?? 60;
 
       // Update backend automation parameters if user customized them
       if (config) {
-        let minD = config.minDuration ?? 15;
-        let maxD = config.maxDuration ?? 60;
         if (config.durationRange === '15-30') {
           minD = 15; maxD = 30;
         } else if (config.durationRange === '30-60') {

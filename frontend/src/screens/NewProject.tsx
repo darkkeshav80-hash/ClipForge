@@ -80,6 +80,8 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
   const [isProcessingSource, setIsProcessingSource] = useState(false);
   const [sourceStatusText, setSourceStatusText] = useState('Analyzing media...');
   const [urlInput, setUrlInput] = useState('');
+  const [liveMinutes, setLiveMinutes] = useState<number>(10);
+  const [liveMode, setLiveMode] = useState<'last' | 'next'>('last');
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -165,7 +167,7 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
     setSourceStatusText('Downloading video & analyzing streams via yt-dlp...');
 
     try {
-      const res = await api.importVideoUrl(urlInput.trim()) as any;
+      const res = await api.importVideoUrl(urlInput.trim(), liveMinutes, liveMode) as any;
       const readyData: VideoInfo = {
         video_path: res.video_path || res.path,
         filename: res.filename || res.title || 'Imported Video',
@@ -373,6 +375,63 @@ export const NewProjectScreen: React.FC<NewProjectProps> = ({
                         </>
                       )}
                     </button>
+                  </div>
+                </div>
+
+                {/* Livestream DVR Capture Window Options */}
+                <div className="p-3.5 rounded-2xl bg-purple-950/20 border border-purple-500/20 text-xs text-slate-300 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="flex items-center space-x-2 font-medium text-purple-200">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+                      </span>
+                      <span>Livestream DVR Capture:</span>
+                    </span>
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-[11px] text-slate-400 mr-1">Duration:</span>
+                      {[5, 10, 15, 20].map((mins) => (
+                        <button
+                          key={mins}
+                          type="button"
+                          onClick={() => setLiveMinutes(mins)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                            liveMinutes === mins
+                              ? 'bg-purple-600 text-white shadow-[0_0_10px_rgba(168,85,247,0.3)]'
+                              : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
+                          }`}
+                        >
+                          {mins}m
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-400 border-t border-white/[0.06] pt-2 gap-2">
+                    <span>If the link is an active livestream, capture instantly from DVR:</span>
+                    <div className="flex items-center space-x-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setLiveMode('last')}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${
+                          liveMode === 'last'
+                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/40'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Past {liveMinutes}m (DVR)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLiveMode('next')}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${
+                          liveMode === 'next'
+                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/40'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Next {liveMinutes}m
+                      </button>
+                    </div>
                   </div>
                 </div>
 

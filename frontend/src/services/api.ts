@@ -82,11 +82,19 @@ export const api = {
     });
   },
 
-  async importVideoUrl(url: string): Promise<{ title: string; duration: number; thumbnail_url: string; video_path: string; metadata: any }> {
+  async importVideoUrl(
+    url: string,
+    liveClipMinutes: number = 10,
+    liveMode: string = 'last'
+  ): Promise<{ title: string; duration: number; thumbnail_url: string; thumbnail_path?: string; video_path: string; is_live?: boolean; metadata?: any }> {
     const res = await fetch(`${API_BASE}/videos/import-url`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({
+        url,
+        live_clip_minutes: liveClipMinutes,
+        live_mode: liveMode,
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Failed to inspect URL' }));
