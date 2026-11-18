@@ -28,6 +28,22 @@ class Settings(BaseSettings):
     CONFIG_DIR: Path = BASE_DIR / "config"
     DATABASE_PATH: Path = BASE_DIR / "storage" / "clipforge.db"
 
+    def model_post_init(self, __context):
+        if not self.STORAGE_DIR.is_absolute():
+            self.STORAGE_DIR = (self.ROOT_DIR / self.STORAGE_DIR).resolve()
+        else:
+            self.STORAGE_DIR = self.STORAGE_DIR.resolve()
+        self.UPLOADS_DIR = self.STORAGE_DIR / "uploads"
+        self.CLIPS_DIR = self.STORAGE_DIR / "clips"
+        self.THUMBNAILS_DIR = self.STORAGE_DIR / "thumbnails"
+        self.CAPTIONS_DIR = self.STORAGE_DIR / "captions"
+        self.TEMP_DIR = self.STORAGE_DIR / "temp"
+        self.PREVIEWS_DIR = self.STORAGE_DIR / "previews"
+        if not self.DATABASE_PATH.is_absolute():
+            self.DATABASE_PATH = (self.ROOT_DIR / self.DATABASE_PATH).resolve()
+        else:
+            self.DATABASE_PATH = self.DATABASE_PATH.resolve()
+
     # Network hardening (local-first: only the local UI may talk to the API)
     ALLOWED_ORIGINS: List[str] = [
         "http://localhost:3000",

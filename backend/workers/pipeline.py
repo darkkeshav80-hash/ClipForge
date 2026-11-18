@@ -474,8 +474,8 @@ class PipelineWorker:
                 )
 
                 # Update clip in DB
-                rel_clip_path = str(output_clip_path.relative_to(settings.STORAGE_DIR)).replace("\\", "/")
-                rel_thumb_path = str(thumb_path.relative_to(settings.STORAGE_DIR)).replace("\\", "/")
+                rel_clip_path = str(output_clip_path.resolve().relative_to(settings.STORAGE_DIR.resolve())).replace("\\", "/")
+                rel_thumb_path = str(thumb_path.resolve().relative_to(settings.STORAGE_DIR.resolve())).replace("\\", "/")
 
                 async with db.get_connection() as conn:
                     await conn.execute("""

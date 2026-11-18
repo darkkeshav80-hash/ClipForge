@@ -181,8 +181,8 @@ async def render_clip_by_id(clip_id: str, options: Optional[Dict[str, Any]] = No
 
     ffmpeg_engine.extract_thumbnail(output_clip_path, 0.5, thumb_path)
 
-    rel_clip = str(output_clip_path.relative_to(settings.STORAGE_DIR)).replace("\\", "/")
-    rel_thumb = str(thumb_path.relative_to(settings.STORAGE_DIR)).replace("\\", "/")
+    rel_clip = str(output_clip_path.resolve().relative_to(settings.STORAGE_DIR.resolve())).replace("\\", "/")
+    rel_thumb = str(thumb_path.resolve().relative_to(settings.STORAGE_DIR.resolve())).replace("\\", "/")
 
     async with db.get_connection() as conn:
         await conn.execute("""
